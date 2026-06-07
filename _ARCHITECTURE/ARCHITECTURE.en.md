@@ -87,6 +87,9 @@
 - [packages/coding-agent/src/core/extensions/index.ts](../packages/coding-agent/src/core/extensions/index.ts) | Extensions system entry point for customization
 - [packages/coding-agent/src/core/tools/index.ts](../packages/coding-agent/src/core/tools/index.ts) | All built-in tools (bash, read, write, edit, grep, find, ls)
 
+## Feature Index
+- CLI startup main flow from process entry through argument parsing, session/runtime creation, and mode dispatch, see [cli-main-flow.en.md](./_FEATURE/cli-main-flow.en.md)
+
 ## Risks And Unknowns
 - AI provider implementations | Each provider has unique message format, streaming behavior, error handling; not all tested end-to-end | test files in packages/ai/test/ | medium
 - Extension system API stability | Extensions expose many lifecycle hooks; API surface may evolve | packages/coding-agent/src/core/extensions/types.ts | medium

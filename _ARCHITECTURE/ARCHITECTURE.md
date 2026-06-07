@@ -172,6 +172,10 @@ generateSummary() / generateBranchSummary() → 替换会话历史
 7. [packages/coding-agent/src/core/extensions/index.ts](../packages/coding-agent/src/core/extensions/index.ts) — 扩展系统入口
 8. [packages/coding-agent/src/core/tools/index.ts](../packages/coding-agent/src/core/tools/index.ts) — 所有内置工具一览
 
+## 功能索引
+
+- CLI 启动主流程：从进程入口经过参数解析、会话/runtime 创建到运行模式分发，详见 [cli-main-flow.md](./_FEATURE/cli-main-flow.md)
+
 ## 风险与未知
 
 | 风险点              | 说明                                                   | 确认途径                                                                         |
