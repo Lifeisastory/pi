@@ -200,7 +200,7 @@ ChatRealm/
 
 ### TODO-002: Implement CLI Argument Parsing
 
-- Status: in_progress
+- Status: completed
 - Goal: Teach the CLI to understand user input from the terminal without starting any real agent logic yet.
 - Scope:
   - Add a small argument parser in `src/cli/args.ts`.
@@ -391,13 +391,154 @@ ChatRealm/
      - Join positional prompt parts with a single space.
      - Example: `["write", "a", "haiku"]` becomes `prompt: "write a haiku"`.
      - If `-p/--prompt` was already provided, prefer the explicit prompt and ignore positional prompt for now.
+     - What "positional" means:
+       - A positional argument is an argument that is not attached to a flag name.
+       - In `agent --model demo write a greeting`, `--model` is a flag, `demo` is the flag value, and `write`, `a`, `greeting` are positional prompt parts.
+       - In `agent "write a greeting"`, the whole `"write a greeting"` string is one positional argument.
+     - Add a local array to collect positional parts:
+       ```ts
+       const positionalParts: string[] = [];
+       ```
+     - Put this array near the top of `parseArgs`, after the `parsed` object and before the loop.
+     - Inside the loop, after all known flag checks, treat the current argument as positional text:
+       ```ts
+       positionalParts.push(arg);
+       ```
+     - At this point in the loop, `arg` is safe to collect because:
+       - `--help` and `-h` already used `continue`.
+       - Value flags such as `--model demo` already consumed their value and used `continue`.
+       - Known flags have already been handled.
+     - After the loop finishes, convert collected parts into the final prompt:
+       ```ts
+       if (parsed.prompt === undefined && positionalParts.length > 0) {
+         parsed.prompt = positionalParts.join(" ");
+       }
+       ```
+     - Why this happens after the loop:
+       - The parser needs to see every argument before it knows all positional parts.
+       - Joining once at the end is simpler than repeatedly changing `parsed.prompt` inside the loop.
+       - It keeps explicit prompt handling easy: `-p "hello"` wins over positional text.
+     - Why check `parsed.prompt === undefined`:
+       - `-p` and `--prompt` are explicit user choices.
+       - Explicit prompt should win over positional text for this MVP.
+       - Example: `agent -p "hello" ignored words` should keep `prompt: "hello"` for now.
+     - Manual examples to think through:
+       - `parseArgs(["write", "a", "haiku"])` should return `prompt: "write a haiku"`.
+       - `parseArgs(["--model", "demo", "write", "a", "haiku"])` should return `model: "demo"` and `prompt: "write a haiku"`.
+       - `parseArgs(["-p", "hello", "ignored"])` should return `prompt: "hello"`.
+       - `parseArgs([])` should leave `prompt: undefined`.
+     - Beginner debugging tip:
+       - If a flag value accidentally appears in the prompt, check whether you forgot `index += 1` after reading that flag's value.
+       - If all positional text disappears, check whether `positionalParts.push(arg)` is placed before a `continue` that skips it.
+     - What not to do:
+       - Do not join `argv` directly; that would accidentally include flags like `--model`.
+       - Do not make positional text overwrite `-p` or `--prompt`.
+       - Do not trim or validate the prompt yet unless you intentionally document that behavior.
+       - Do not add config defaults here; this parser should only reflect what the user typed.
   7. Handle unknown flags.
      - If an argument starts with `-` and is not supported, throw an `Error`.
      - Example message: `Unknown option: --bad`.
+     - Why this step exists:
+       - Without unknown flag handling, a typo like `--modle demo` would be treated as positional prompt text.
+       - That would hide the user's mistake and make the CLI behave unpredictably.
+       - A CLI should fail fast when it sees an option it does not understand.
+     - Where to put this check:
+       - Put it inside the `for` loop.
+       - Put it after all supported flags have been checked.
+       - Put it before `positionalParts.push(arg)`.
+     - The order should look like this:
+       ```ts
+       for (let index = 0; index < argv.length; index += 1) {
+         const arg = argv[index];
+
+         if (arg === "--help" || arg === "-h") {
+           parsed.help = true;
+           continue;
+         }
+
+         if (arg === "-p" || arg === "--prompt") {
+           parsed.prompt = readValue(arg, index);
+           index += 1;
+           continue;
+         }
+
+         // Other known flags go here.
+
+         if (arg.startsWith("-")) {
+           throw new Error(`Unknown option: ${arg}`);
+         }
+
+         positionalParts.push(arg);
+       }
+       ```
+     - Why `startsWith("-")` is enough for this MVP:
+       - CLI flags normally start with `-`, such as `-p` or `--model`.
+       - Positional prompt text normally does not start with `-`.
+       - This simple rule catches common mistakes without adding a complex parser.
+     - Important edge case:
+       - In this MVP, prompt words that start with `-` will be rejected if they are positional text.
+       - Example: `agent explain --not-a-real-flag` should throw `Unknown option: --not-a-real-flag`.
+       - If the user really needs prompt text that starts with `-`, they can use `-p "--not-a-real-flag"` because Step 5 accepts flag values even when they start with `-`.
+     - Manual examples:
+       - `parseArgs(["--bad"])` should throw `Unknown option: --bad`.
+       - `parseArgs(["--model", "demo", "--bad"])` should throw `Unknown option: --bad`.
+       - `parseArgs(["write", "--bad"])` should throw `Unknown option: --bad`.
+       - `parseArgs(["-p", "--bad"])` should return `prompt: "--bad"` because `--bad` is the value consumed by `-p`.
+       - `parseArgs(["--prompt", "--bad"])` should return `prompt: "--bad"` for the same reason.
+     - How to verify from `main.ts` after parser output is wired:
+       - `npm run dev -- -- --bad`
+       - Expected terminal output should contain `Unknown option: --bad`.
+       - The process should exit with a non-zero status because `main.ts` sets `process.exitCode = 1` in the `catch` block.
+     - Beginner debugging tip:
+       - If `--bad` appears inside the printed JSON prompt, the unknown flag check is probably after `positionalParts.push(arg)` or missing.
+       - If `-p --bad` throws an unknown option error, the unknown flag check is probably running before the `-p` branch consumes its value.
+     - What not to do:
+       - Do not silently ignore unknown flags.
+       - Do not add unknown flags to `positionalParts`.
+       - Do not support aliases that are not listed in the TODO.
+       - Do not add a third-party argument parser yet; the goal is to learn the mechanics first.
   8. Add a help text function.
-     - Export a function named `getHelpText`.
-     - It should return a short usage string showing supported flags.
-     - Keep it plain text.
+     - Export a function named `getHelpText` from `src/cli/args.ts`.
+     - Keep this function separate from `parseArgs`: `parseArgs` parses input, while `getHelpText` returns display text.
+     - The function should not print, exit the process, read files, or accept arguments in this TODO.
+     - Use an array of strings with `join("\n")` so the Markdown code block stays easy to read.
+     - Recommended implementation:
+
+       ```ts
+       export function getHelpText(): string {
+         return [
+           "Usage:",
+           "  agent [options] [prompt]",
+           "",
+           "Options:",
+           "  -p, --prompt <text>     Prompt text to send to the agent",
+           "  --model <name>          Model name override",
+           "  --provider <name>       Provider name override",
+           "  --cwd <path>            Working directory override",
+           "  -h, --help              Show help",
+         ].join("\n");
+       }
+       ```
+
+     - In this usage text, `[options]` and `[prompt]` mean those parts are optional.
+     - Keep the help text limited to features that exist in TODO-002. Do not mention config files, LLM calls, tools, sessions, or future modes yet.
+     - Step 9 will use the function from `main.ts` like this:
+
+       ```ts
+       if (parsed.help) {
+         console.log(getHelpText());
+         return;
+       }
+       ```
+
+     - Manual checks after Step 9 wires `main.ts`:
+       - `npm run dev -- -- --help` should print help text, not JSON.
+       - `npm run dev -- -- -h` should print the same help text.
+       - Help output should exit successfully.
+     - Beginner checks:
+       - If TypeScript reports an unterminated string, check that every string in the array has matching quotes.
+       - If `--help` still prints JSON, make sure `main.ts` checks `parsed.help` before printing the parsed object.
+       - If the help text documents a flag, that flag should already be supported by `parseArgs`.
   9. Update `src/main.ts`.
      - Import `parseArgs` and `getHelpText`.
      - Call `parseArgs(process.argv.slice(2))`.
@@ -435,9 +576,262 @@ ChatRealm/
 ### TODO-003: Add Configuration Loading
 
 - Status: pending
-- Scope: Load API key, base URL, model, and default working directory from environment variables and an optional local config file.
+- Goal: Add a small configuration layer so later TODOs can get provider settings without reading environment variables or JSON files directly.
+- Scope:
+  - Create `src/config/config.ts`.
+  - Create `src/utils/json.ts`.
+  - Load config from environment variables.
+  - Load config from an optional local JSON config file.
+  - Merge config values with clear precedence.
+  - Provide a default working directory.
+  - Do not call an LLM, create provider objects, run tools, persist sessions, or add tests yet.
 - Likely files or areas: `src/config/config.ts`, `src/utils/json.ts`
 - Dependencies: TODO-001, TODO-002
+- Configuration source design:
+  - Local config file name: `chatrealm.config.json`.
+  - Default lookup location: current working directory.
+  - Optional config path override: `CHATREALM_CONFIG`.
+  - Environment variables:
+    - `CHATREALM_API_KEY`
+    - `CHATREALM_BASE_URL`
+    - `CHATREALM_MODEL`
+    - `CHATREALM_CWD`
+  - JSON config keys:
+    - `apiKey`
+    - `baseUrl`
+    - `model`
+    - `cwd`
+  - Precedence:
+    - Environment variables should override config file values.
+    - Config file values should override built-in defaults.
+    - `cwd` should default to `process.cwd()` when not provided.
+    - API key, base URL, and model can stay `undefined` for now; TODO-005 or TODO-011 can decide when they are required.
+- Step-by-step implementation guide:
+  1. Create the folders.
+     - Create `src/config/`.
+     - Create `src/utils/`.
+     - Create `src/config/config.ts`.
+     - Create `src/utils/json.ts`.
+  2. Define the config type in `src/config/config.ts`.
+     - Export an interface named `AppConfig`.
+     - Use explicit `string | undefined` for optional provider settings.
+     - Keep `cwd` as a required `string` because the program should always have a working directory.
+     - Recommended shape:
+       ```ts
+       export interface AppConfig {
+         apiKey: string | undefined;
+         baseUrl: string | undefined;
+         model: string | undefined;
+         cwd: string;
+       }
+       ```
+     - Why `cwd` is not optional:
+       - The agent will need a working directory for file tools later.
+       - If the user does not provide one, `process.cwd()` is a reasonable default.
+  3. Define a small load-options type.
+     - Export an interface named `LoadConfigOptions`.
+     - This makes the loader easy to verify manually and easier to test later.
+     - Avoid `NodeJS.ProcessEnv` for now so you do not need extra Node type details in this learning step.
+     - Recommended shape:
+       ```ts
+       export interface LoadConfigOptions {
+         env?: Record<string, string | undefined>;
+         cwd?: string;
+       }
+       ```
+     - `env` lets tests or manual checks pass fake environment values later.
+     - `cwd` lets callers choose where to look for `chatrealm.config.json`.
+  4. Add a JSON object parser in `src/utils/json.ts`.
+     - Export a function named `parseJsonObject`.
+     - It should accept `text: string` and `sourceName: string`.
+     - It should return `Record<string, unknown>`.
+     - It should throw a clear error if JSON parsing fails or if the parsed value is not an object.
+     - Start with this function skeleton:
+
+       ```ts
+       export function parseJsonObject(
+         text: string,
+         sourceName: string,
+       ): Record<string, unknown> {
+         // Implementation goes here.
+       }
+       ```
+
+     - Parse the JSON inside a `try/catch`.
+     - Store the parsed value in a variable typed as `unknown`.
+     - Use `unknown` because the file can contain anything: an object, an array, a string, a number, `true`, `false`, or `null`.
+     - Recommended parse block:
+
+       ```ts
+       let parsed: unknown;
+
+       try {
+         parsed = JSON.parse(text);
+       } catch {
+         throw new Error(`Invalid JSON in ${sourceName}`);
+       }
+       ```
+
+     - After parsing, verify that the value is a plain JSON object.
+     - The check needs three parts:
+       - `typeof parsed === "object"` confirms the value is object-like.
+       - `parsed !== null` excludes `null`, because JavaScript reports `typeof null` as `"object"`.
+       - `!Array.isArray(parsed)` excludes arrays, because arrays are objects in JavaScript but are not valid config objects for this TODO.
+     - Recommended object check:
+
+       ```ts
+       if (
+         typeof parsed !== "object" ||
+         parsed === null ||
+         Array.isArray(parsed)
+       ) {
+         throw new Error(`Expected JSON object in ${sourceName}`);
+       }
+
+       return parsed as Record<string, unknown>;
+       ```
+
+     - Why the final type assertion is acceptable here:
+       - The runtime checks already proved the value is a non-null object and not an array.
+       - TypeScript still cannot know that every key maps to `unknown`.
+       - `Record<string, unknown>` is a safe shape because values are still not trusted yet.
+       - Step 5 will validate each individual value before using it as a string.
+     - Full recommended implementation:
+
+       ```ts
+       export function parseJsonObject(
+         text: string,
+         sourceName: string,
+       ): Record<string, unknown> {
+         let parsed: unknown;
+
+         try {
+           parsed = JSON.parse(text);
+         } catch {
+           throw new Error(`Invalid JSON in ${sourceName}`);
+         }
+
+         if (
+           typeof parsed !== "object" ||
+           parsed === null ||
+           Array.isArray(parsed)
+         ) {
+           throw new Error(`Expected JSON object in ${sourceName}`);
+         }
+
+         return parsed as Record<string, unknown>;
+       }
+       ```
+
+     - Manual examples to reason through:
+       - `parseJsonObject("{\"model\":\"demo\"}", "chatrealm.config.json")` should succeed.
+       - `parseJsonObject("{", "chatrealm.config.json")` should throw `Invalid JSON in chatrealm.config.json`.
+       - `parseJsonObject("null", "chatrealm.config.json")` should throw `Expected JSON object in chatrealm.config.json`.
+       - `parseJsonObject("[]", "chatrealm.config.json")` should throw `Expected JSON object in chatrealm.config.json`.
+       - `parseJsonObject("\"hello\"", "chatrealm.config.json")` should throw `Expected JSON object in chatrealm.config.json`.
+     - What not to do:
+       - Do not return the raw result of `JSON.parse`.
+       - Do not use `any`.
+       - Do not silently return `{}` when JSON is invalid.
+       - Do not validate `apiKey`, `baseUrl`, `model`, or `cwd` in this function; Step 5 owns value-level validation.
+  5. Add a helper to read optional string keys.
+     - In `src/utils/json.ts`, export a function named `readOptionalString`.
+     - Suggested signature:
+       ```ts
+       export function readOptionalString(
+         object: Record<string, unknown>,
+         key: string,
+         sourceName: string,
+       ): string | undefined
+       ```
+     - If the key is missing, return `undefined`.
+     - If the value is a string, return it.
+     - If the value exists but is not a string, throw a clear error such as `Expected string for model in chatrealm.config.json`.
+     - Do not use `any`.
+  6. Implement config file loading in `src/config/config.ts`.
+     - Import Node built-ins at the top:
+       ```ts
+       import { existsSync, readFileSync } from "node:fs";
+       import { resolve } from "node:path";
+       ```
+     - Import the JSON helpers from `../utils/json.js`.
+     - Inside `loadConfig`, determine:
+       - `env`: default to `process.env`.
+       - `cwd`: default to `process.cwd()`.
+       - `configPath`: `env.CHATREALM_CONFIG` if present, otherwise `resolve(cwd, "chatrealm.config.json")`.
+     - If the config file exists, read it as UTF-8 and parse it.
+     - If it does not exist, continue with an empty object.
+     - Do not create the config file in this TODO.
+  7. Merge file values and environment values.
+     - Read file values from JSON keys: `apiKey`, `baseUrl`, `model`, `cwd`.
+     - Read environment values from `CHATREALM_API_KEY`, `CHATREALM_BASE_URL`, `CHATREALM_MODEL`, `CHATREALM_CWD`.
+     - Environment values win over file values.
+     - `cwd` should fall back to the loader's current working directory.
+     - Recommended merge shape:
+       ```ts
+       const config: AppConfig = {
+         apiKey: env.CHATREALM_API_KEY ?? fileApiKey,
+         baseUrl: env.CHATREALM_BASE_URL ?? fileBaseUrl,
+         model: env.CHATREALM_MODEL ?? fileModel,
+         cwd: env.CHATREALM_CWD ?? fileCwd ?? cwd,
+       };
+       ```
+     - Return this config object.
+  8. Temporarily wire `main.ts` for manual verification.
+     - Import `loadConfig`.
+     - After parsing CLI args and handling help, call `loadConfig()`.
+     - Print both parsed args and config for now.
+     - Keep this simple; TODO-011 will decide how CLI overrides combine with config.
+     - Example temporary output shape:
+       ```ts
+       console.log(JSON.stringify({ args: parsed, config }, null, 2));
+       ```
+  9. Run manual checks.
+     - `npm run check`
+     - `npm run dev -- --help`
+     - `npm run dev -- -p "hello"`
+     - Create a local `chatrealm.config.json` with:
+       ```json
+       {
+         "baseUrl": "https://example.test/v1",
+         "model": "demo-model",
+         "cwd": "."
+       }
+       ```
+     - Run `npm run dev -- -p "hello"` and confirm the printed config includes those values.
+     - In PowerShell, test an environment override:
+       ```powershell
+       $env:CHATREALM_MODEL = "env-model"
+       npm run dev -- -p "hello"
+       Remove-Item Env:\CHATREALM_MODEL
+       ```
+     - Confirm `model` becomes `"env-model"` while the env var is set.
+     - Run with invalid JSON and confirm the error is clear.
+  10. Clean up manual verification files.
+      - Remove the temporary `chatrealm.config.json` if it was only created for manual testing.
+      - Do not commit local secrets.
+- Beginner notes:
+  - Environment variables are strings provided by the shell or operating system.
+  - A config file is useful for values you do not want to type every time.
+  - Do not hardcode real API keys in source files or committed config files.
+  - `process.cwd()` means the directory where the command was started.
+  - `resolve(cwd, "chatrealm.config.json")` creates an absolute path to the expected config file.
+  - `??` means "use the value on the left unless it is `null` or `undefined`".
+- Acceptance criteria:
+  - `npm run check` succeeds.
+  - Missing `chatrealm.config.json` does not crash.
+  - A valid `chatrealm.config.json` is loaded.
+  - Environment variables override config file values.
+  - `cwd` always has a string value.
+  - Invalid JSON produces a clear error.
+  - Non-string config values for string fields produce clear errors.
+  - No LLM calls, tool execution, sessions, or tests are added in this TODO.
+- Reviewer checklist:
+  - Confirm config loading is isolated in `src/config/config.ts`.
+  - Confirm JSON parsing helpers are isolated in `src/utils/json.ts`.
+  - Confirm there is no `any`.
+  - Confirm no secrets are committed.
+  - Confirm `main.ts` only prints config temporarily for verification and does not start agent behavior.
 
 ### TODO-004: Define AI Transport Types
 
@@ -535,7 +929,7 @@ ChatRealm/
 
 ## Next Executable Item
 
-- TODO-002: Implement CLI Argument Parsing
+- TODO-003: Add Configuration Loading
 
 ## Assumptions
 
