@@ -1,0 +1,5 @@
+{
+    "baseUrl": "https://example.test/v1",
+    "model": "demo-model",
+    "cwd": "."
+}

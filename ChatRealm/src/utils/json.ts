@@ -16,3 +16,17 @@ export function parseJsonObject(
 
   return parsed as Record<string, unknown>;
 }
+
+export function readOptionalString(object: Record<string, unknown>, key: string, sourceName: string): string | undefined {
+  const value = object[key];
+
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new Error(`Expected string for ${key} in ${sourceName}`);
+  }
+
+  return value;
+}

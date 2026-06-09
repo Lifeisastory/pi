@@ -748,6 +748,74 @@ ChatRealm/
      - If the value is a string, return it.
      - If the value exists but is not a string, throw a clear error such as `Expected string for model in chatrealm.config.json`.
      - Do not use `any`.
+     - Why this helper exists:
+       - `parseJsonObject` only proves that the whole JSON file is an object.
+       - It does not prove that `object.model`, `object.apiKey`, or any other field is a string.
+       - JSON files are external input, so TypeScript cannot trust their contents.
+       - This helper creates one small, reusable place for checking optional string fields.
+     - What "optional string" means here:
+       - The key may be absent. Example: `{ "model": "demo" }` does not contain `apiKey`.
+       - If the key is absent, the loader should treat that value as not configured and return `undefined`.
+       - If the key is present, the value must be a string.
+       - `undefined` means "not provided"; it is not an error for optional config keys.
+     - Add the function below `parseJsonObject` in `src/utils/json.ts`.
+     - Recommended implementation:
+
+       ```ts
+       export function readOptionalString(
+         object: Record<string, unknown>,
+         key: string,
+         sourceName: string,
+       ): string | undefined {
+         const value = object[key];
+
+         if (value === undefined) {
+           return undefined;
+         }
+
+         if (typeof value !== "string") {
+           throw new Error(`Expected string for ${key} in ${sourceName}`);
+         }
+
+         return value;
+       }
+       ```
+
+     - Read the code from top to bottom:
+       - `const value = object[key];` reads one property from the JSON object.
+       - `object[key]` is bracket notation. It is used because `key` is a variable.
+       - If `key` is `"model"`, then `object[key]` means the same thing as `object.model`.
+       - `value === undefined` means the JSON object does not have that key, or the key value is actually `undefined`.
+       - JSON files cannot naturally contain `undefined`, so for this TODO you can treat this as "missing".
+       - `typeof value !== "string"` catches invalid values such as numbers, booleans, arrays, objects, and `null`.
+       - After that check passes, TypeScript understands that `value` is a `string`.
+       - Returning `value` at the end is safe because the function has already rejected non-string values.
+     - Why the function takes `sourceName`:
+       - Error messages should tell the user where the bad value came from.
+       - `Expected string for model in chatrealm.config.json` is easier to fix than `Invalid config`.
+       - Later, if config can come from another file, the same helper can still produce useful errors.
+     - Why this function returns `string | undefined`:
+       - `string` means the config file provided a valid value.
+       - `undefined` means the config file did not provide that key.
+       - It should not return an empty string as a default, because an empty string can hide mistakes.
+     - Manual examples to reason through:
+       - `readOptionalString({ model: "demo" }, "model", "chatrealm.config.json")` should return `"demo"`.
+       - `readOptionalString({}, "model", "chatrealm.config.json")` should return `undefined`.
+       - `readOptionalString({ model: 123 }, "model", "chatrealm.config.json")` should throw `Expected string for model in chatrealm.config.json`.
+       - `readOptionalString({ model: null }, "model", "chatrealm.config.json")` should throw `Expected string for model in chatrealm.config.json`.
+       - `readOptionalString({ model: ["demo"] }, "model", "chatrealm.config.json")` should throw `Expected string for model in chatrealm.config.json`.
+     - Beginner checks:
+       - If TypeScript says `object` has an implicit `any` type, make sure the parameter is exactly `object: Record<string, unknown>`.
+       - If TypeScript says `key` has an implicit `any` type, make sure the parameter is exactly `key: string`.
+       - If TypeScript says the function is missing a return value, make sure every branch returns or throws.
+       - If the error message prints the wrong field name, make sure the template string uses `${key}`.
+       - Template strings use backticks, not quotes: `` `Expected string for ${key} in ${sourceName}` ``.
+     - What not to do:
+       - Do not write `return object[key] as string`; that skips runtime validation.
+       - Do not use `String(value)`; it would silently turn `123` into `"123"` and hide bad config.
+       - Do not return `""` for missing values; use `undefined`.
+       - Do not validate whether the string is a real API key, URL, model name, or path in this helper.
+       - Do not read files in this helper; file reading belongs to `loadConfig`.
   6. Implement config file loading in `src/config/config.ts`.
      - Import Node built-ins at the top:
        ```ts
@@ -762,6 +830,96 @@ ChatRealm/
      - If the config file exists, read it as UTF-8 and parse it.
      - If it does not exist, continue with an empty object.
      - Do not create the config file in this TODO.
+     - Why this step exists:
+       - Later code should call one function, `loadConfig`, instead of knowing where config files live.
+       - This keeps file-system details inside `src/config/config.ts`.
+       - It also keeps environment-variable reading out of provider, agent, and tool code.
+     - Add the imports at the very top of `src/config/config.ts`.
+     - The import from `../utils/json.js` should include the helpers from Steps 4 and 5:
+
+       ```ts
+       import { parseJsonObject, readOptionalString } from "../utils/json.js";
+       ```
+
+     - Why the import path ends in `.js`:
+       - The TypeScript project uses Node ESM settings.
+       - In Node ESM-style TypeScript, local relative imports should use the runtime `.js` extension.
+       - The source file is still `json.ts`; TypeScript understands that `../utils/json.js` points to it during development.
+     - Add the `loadConfig` function below the interfaces in `src/config/config.ts`.
+     - Recommended starting skeleton:
+
+       ```ts
+       export function loadConfig(options: LoadConfigOptions = {}): AppConfig {
+         const env = options.env ?? process.env;
+         const cwd = options.cwd ?? process.cwd();
+         const configPath = env.CHATREALM_CONFIG ?? resolve(cwd, "chatrealm.config.json");
+
+         let fileConfig: Record<string, unknown> = {};
+
+         if (existsSync(configPath)) {
+           const text = readFileSync(configPath, "utf8");
+           fileConfig = parseJsonObject(text, configPath);
+         }
+
+         const fileApiKey = readOptionalString(fileConfig, "apiKey", configPath);
+         const fileBaseUrl = readOptionalString(fileConfig, "baseUrl", configPath);
+         const fileModel = readOptionalString(fileConfig, "model", configPath);
+         const fileCwd = readOptionalString(fileConfig, "cwd", configPath);
+
+         // Step 7 will merge file values with environment variables.
+       }
+       ```
+
+     - This skeleton will not pass TypeScript yet because it does not return `AppConfig`.
+       - That is expected only while you are in the middle of Step 6.
+       - Step 7 adds the final `const config: AppConfig = ...` and `return config`.
+       - If you want `npm run check` to pass immediately after Step 6, temporarily finish the function with the Step 7 return shape instead of stopping at the comment.
+     - Read the first three constants carefully:
+       - `options.env ?? process.env` means: use the fake/test environment if the caller provided one; otherwise use real process environment variables.
+       - `options.cwd ?? process.cwd()` means: use the caller's working directory if provided; otherwise use the directory where the command was started.
+       - `env.CHATREALM_CONFIG ?? resolve(cwd, "chatrealm.config.json")` means: use the explicit config path if provided; otherwise look for `chatrealm.config.json` inside `cwd`.
+     - What `resolve(cwd, "chatrealm.config.json")` does:
+       - It combines the working directory with the config file name.
+       - If `cwd` is `/project/ChatRealm`, the result is `/project/ChatRealm/chatrealm.config.json`.
+       - On Windows, the result will use a Windows-style absolute path.
+       - Using `resolve` is safer than manually joining strings with `/`.
+     - Why `fileConfig` starts as `{}`:
+       - The config file is optional.
+       - If the file is missing, the loader still needs an object to read from.
+       - Reading optional keys from `{}` simply returns `undefined`.
+     - What `existsSync(configPath)` does:
+       - It checks whether a file or path currently exists.
+       - If it returns `true`, this TODO reads the file.
+       - If it returns `false`, this TODO skips reading and keeps `fileConfig` as `{}`.
+     - What `readFileSync(configPath, "utf8")` does:
+       - It reads the whole file as text.
+       - `"utf8"` tells Node to decode the file as normal text instead of returning raw bytes.
+       - Synchronous reading is acceptable here because config loading happens once at CLI startup.
+     - What `parseJsonObject(text, configPath)` does:
+       - It parses the text as JSON.
+       - It rejects invalid JSON.
+       - It rejects valid JSON that is not an object, such as `null`, `[]`, or `"hello"`.
+       - Passing `configPath` makes error messages point at the actual file path.
+     - Why this step reads file values before merging:
+       - `fileApiKey`, `fileBaseUrl`, `fileModel`, and `fileCwd` are only values from the JSON file.
+       - They do not include environment variable overrides yet.
+       - Keeping file values separate makes Step 7's precedence rule easier to see.
+     - Manual examples to reason through:
+       - If no config file exists, `fileConfig` should stay `{}`.
+       - If `chatrealm.config.json` contains `{ "model": "demo-model" }`, then `fileModel` should be `"demo-model"`.
+       - If it contains `{ "model": 123 }`, `readOptionalString` should throw a clear error.
+       - If `CHATREALM_CONFIG` is set, the loader should check that path instead of the default file in `cwd`.
+     - Beginner checks:
+       - If TypeScript cannot find `node:fs` or `process`, you may need Node types installed later, but do not change this TODO's architecture to avoid Node APIs.
+       - If TypeScript complains that `loadConfig` does not return a value, finish Step 7 before running the final check.
+       - If TypeScript cannot find `../utils/json.js`, confirm `src/utils/json.ts` exists and the relative path from `src/config/config.ts` is correct.
+       - If the config file is ignored even though it exists, print or inspect `configPath` temporarily to confirm which directory `cwd` points to.
+     - What not to do:
+       - Do not create `chatrealm.config.json` automatically.
+       - Do not catch and hide JSON parse errors.
+       - Do not put default model or API key values in this step.
+       - Do not merge environment variables in the file-reading block; Step 7 owns precedence.
+       - Do not call an LLM or create a provider from `loadConfig`.
   7. Merge file values and environment values.
      - Read file values from JSON keys: `apiKey`, `baseUrl`, `model`, `cwd`.
      - Read environment values from `CHATREALM_API_KEY`, `CHATREALM_BASE_URL`, `CHATREALM_MODEL`, `CHATREALM_CWD`.
@@ -836,16 +994,947 @@ ChatRealm/
 ### TODO-004: Define AI Transport Types
 
 - Status: pending
-- Scope: Define provider-neutral message, tool, tool call, response, usage, and streaming-ready interfaces.
+- Goal: Create the provider-neutral TypeScript types that the future OpenAI-compatible provider, agent loop, and tools will share.
+- Scope:
+  - Create `src/ai/`.
+  - Create `src/ai/types.ts`.
+  - Define message types for user, assistant, and tool-result messages.
+  - Define assistant content types for plain text and tool calls.
+  - Define tool definition metadata that providers can send to the model.
+  - Define provider request and response types.
+  - Define usage and stop-reason types.
+  - Define a minimal transport interface that TODO-005 can implement.
+  - Define streaming-ready event types, but do not implement streaming yet.
+  - Do not call any provider, execute tools, build an agent loop, or add tests yet.
 - Likely files or areas: `src/ai/types.ts`
-- Dependencies: TODO-001
+- Dependencies: TODO-001, TODO-003
+- Reference from `pi`:
+  - `pi` has a larger version of this boundary in [packages/ai/src/types.ts](../packages/ai/src/types.ts).
+  - For ChatRealm, keep the same idea but much smaller.
+  - The important lesson is not the exact number of types; it is the separation between provider-neutral app code and provider-specific API code.
+- Step-by-step implementation guide:
+  1. Create the AI folder.
+     - Create `src/ai/`.
+     - Create `src/ai/types.ts`.
+     - This file should contain only exported TypeScript types and interfaces.
+     - Do not put runtime provider code in this file.
+  2. Add a small JSON value type.
+     - Tool arguments and JSON schema objects need to represent unknown JSON data.
+     - Do not use `any`.
+     - Add these types near the top of `src/ai/types.ts`:
+
+       ```ts
+       export type JsonPrimitive = string | number | boolean | null;
+
+       export type JsonValue =
+         | JsonPrimitive
+         | JsonValue[]
+         | { [key: string]: JsonValue };
+
+       export type JsonObject = { [key: string]: JsonValue };
+       ```
+
+     - Why this exists:
+       - LLM tool calls usually pass arguments as JSON.
+       - JSON can contain strings, numbers, booleans, null, arrays, and objects.
+       - `JsonValue` models that shape without falling back to `any`.
+     - Beginner note:
+       - This is a recursive type. `JsonValue[]` means an array whose items are also JSON values.
+       - `{ [key: string]: JsonValue }` means an object where every key is a string and every value is also a JSON value.
+  3. Define basic text content.
+     - Add a `TextContent` interface:
+
+       ```ts
+       export interface TextContent {
+         type: "text";
+         text: string;
+       }
+       ```
+
+     - Why `type: "text"` exists:
+       - This is a discriminated union tag.
+       - Later, code can check `content.type === "text"` and TypeScript will know the object has `text`.
+       - This pattern is heavily used in agent code because messages can contain different content kinds.
+  4. Define tool-call content.
+     - Add a `ToolCallContent` interface:
+
+       ```ts
+       export interface ToolCallContent {
+         type: "toolCall";
+         id: string;
+         name: string;
+         arguments: JsonObject;
+       }
+       ```
+
+     - Field meanings:
+       - `id`: provider-generated or adapter-generated ID for matching the later tool result.
+       - `name`: tool name, such as `read_file` or `search`.
+       - `arguments`: parsed JSON object that will be passed to the tool.
+     - Why `arguments` is not `string`:
+       - Provider APIs often send tool arguments as a JSON string.
+       - The provider adapter in TODO-005 should parse that string.
+       - The rest of ChatRealm should receive a typed object, not raw JSON text.
+  5. Define assistant content as a union.
+     - Add:
+
+       ```ts
+       export type AssistantContent = TextContent | ToolCallContent;
+       ```
+
+     - Meaning:
+       - An assistant response can contain normal text.
+       - It can also request one or more tools.
+       - The agent loop in TODO-010 will inspect this union to decide whether to print a final answer or run tools.
+  6. Define usage and stop reason.
+     - Add:
+
+       ```ts
+       export interface Usage {
+         inputTokens: number;
+         outputTokens: number;
+         totalTokens: number;
+       }
+
+       export type StopReason = "stop" | "length" | "toolUse" | "error";
+       ```
+
+     - What these mean:
+       - `Usage` records approximate token counts returned by the provider.
+       - `stop` means the assistant finished normally.
+       - `length` means the model stopped because it hit a token limit.
+       - `toolUse` means the model wants the agent to run a tool.
+       - `error` means the adapter created an error response instead of a normal answer.
+     - Keep cost tracking out of the MVP for now.
+  7. Define message types.
+     - Add:
+
+       ```ts
+       export interface UserMessage {
+         role: "user";
+         content: string;
+       }
+
+       export interface AssistantMessage {
+         role: "assistant";
+         content: AssistantContent[];
+         model: string;
+         usage: Usage | undefined;
+         stopReason: StopReason;
+         errorMessage: string | undefined;
+       }
+
+       export interface ToolResultMessage {
+         role: "toolResult";
+         toolCallId: string;
+         toolName: string;
+         content: string;
+         isError: boolean;
+       }
+
+       export type Message = UserMessage | AssistantMessage | ToolResultMessage;
+       ```
+
+     - Why each message has a literal `role`:
+       - `role` tells later code what kind of message it is.
+       - TypeScript can narrow the union based on `message.role`.
+       - Example: after `if (message.role === "assistant")`, TypeScript knows `message.content` is `AssistantContent[]`.
+     - Why `usage` and `errorMessage` are explicit `| undefined`:
+       - Some providers may not return usage.
+       - Normal responses do not have an error message.
+       - This matches the style used earlier in `ParsedArgs` and `AppConfig`.
+  8. Define tool definition metadata.
+     - Add:
+
+       ```ts
+       export interface ToolDefinition {
+         name: string;
+         description: string;
+         parameters: JsonObject;
+       }
+       ```
+
+     - What `parameters` means:
+       - It is a JSON-schema-like object that describes what arguments the tool accepts.
+       - Example later: a read-file tool may declare that it needs a `path` string.
+       - Do not add a JSON schema library in this TODO.
+     - Why this belongs in `src/ai/types.ts`:
+       - The model provider needs tool metadata to send to the API.
+       - The tool registry in TODO-006 can later use compatible metadata.
+       - This creates the contract between AI provider code and tool code.
+  9. Define provider request and response types.
+     - Add:
+
+       ```ts
+       export interface ChatRequest {
+         model: string;
+         systemPrompt: string | undefined;
+         messages: Message[];
+         tools: ToolDefinition[];
+       }
+
+       export interface ChatResponse {
+         message: AssistantMessage;
+       }
+       ```
+
+     - Why `ChatRequest` exists:
+       - The agent loop should not know OpenAI's exact HTTP request shape.
+       - It should build a provider-neutral `ChatRequest`.
+       - TODO-005 will translate `ChatRequest` into an OpenAI-compatible API payload.
+     - Why `tools` is always an array:
+       - An empty array means "no tools available".
+       - This is simpler than checking both `undefined` and array cases.
+  10. Define the transport interface.
+      - Add:
+
+        ```ts
+        export interface ChatTransport {
+          complete(request: ChatRequest): Promise<ChatResponse>;
+        }
+        ```
+
+      - What a transport is:
+        - It is an object that knows how to call a model provider.
+        - The agent loop can call `transport.complete(request)` without knowing whether the provider is OpenAI, local, fake, or something else.
+        - TODO-005 will implement this interface for one OpenAI-compatible provider.
+      - Why `complete` returns a `Promise`:
+        - Provider calls use network I/O.
+        - Network I/O is asynchronous in JavaScript.
+        - `Promise<ChatResponse>` means the function eventually resolves to a `ChatResponse`.
+  11. Add streaming-ready event types.
+      - The MVP will not stream yet, but defining small event types now keeps the boundary ready.
+      - Add:
+
+        ```ts
+        export type ChatStreamEvent =
+          | { type: "textDelta"; delta: string }
+          | { type: "toolCall"; toolCall: ToolCallContent }
+          | { type: "done"; response: ChatResponse }
+          | { type: "error"; message: string };
+        ```
+
+      - Why this is "streaming-ready":
+        - Later, a provider could emit text chunks as they arrive.
+        - The rest of the program can handle events without changing the core message types.
+        - For now, TODO-005 can ignore this type.
+  12. Review the full expected `src/ai/types.ts`.
+      - A complete first version can look like this:
+
+        ```ts
+        export type JsonPrimitive = string | number | boolean | null;
+
+        export type JsonValue =
+          | JsonPrimitive
+          | JsonValue[]
+          | { [key: string]: JsonValue };
+
+        export type JsonObject = { [key: string]: JsonValue };
+
+        export interface TextContent {
+          type: "text";
+          text: string;
+        }
+
+        export interface ToolCallContent {
+          type: "toolCall";
+          id: string;
+          name: string;
+          arguments: JsonObject;
+        }
+
+        export type AssistantContent = TextContent | ToolCallContent;
+
+        export interface Usage {
+          inputTokens: number;
+          outputTokens: number;
+          totalTokens: number;
+        }
+
+        export type StopReason = "stop" | "length" | "toolUse" | "error";
+
+        export interface UserMessage {
+          role: "user";
+          content: string;
+        }
+
+        export interface AssistantMessage {
+          role: "assistant";
+          content: AssistantContent[];
+          model: string;
+          usage: Usage | undefined;
+          stopReason: StopReason;
+          errorMessage: string | undefined;
+        }
+
+        export interface ToolResultMessage {
+          role: "toolResult";
+          toolCallId: string;
+          toolName: string;
+          content: string;
+          isError: boolean;
+        }
+
+        export type Message = UserMessage | AssistantMessage | ToolResultMessage;
+
+        export interface ToolDefinition {
+          name: string;
+          description: string;
+          parameters: JsonObject;
+        }
+
+        export interface ChatRequest {
+          model: string;
+          systemPrompt: string | undefined;
+          messages: Message[];
+          tools: ToolDefinition[];
+        }
+
+        export interface ChatResponse {
+          message: AssistantMessage;
+        }
+
+        export interface ChatTransport {
+          complete(request: ChatRequest): Promise<ChatResponse>;
+        }
+
+        export type ChatStreamEvent =
+          | { type: "textDelta"; delta: string }
+          | { type: "toolCall"; toolCall: ToolCallContent }
+          | { type: "done"; response: ChatResponse }
+          | { type: "error"; message: string };
+        ```
+
+  13. Run verification.
+      - Run `npm run check`.
+      - If TypeScript reports unused code, remember that exported types are allowed even if not imported yet.
+      - If the checker complains about syntax, inspect the nearest union type and make sure every line has the correct `|`, `{}`, and `;`.
+- Beginner notes:
+  - A type file describes shapes; it does not run behavior.
+  - `interface` is good for object shapes.
+  - `type` is good for unions such as `"stop" | "length"`.
+  - A discriminated union is a union where each member has a literal tag field such as `role` or `type`.
+  - `unknown` means "we do not trust this value yet"; `JsonValue` is more specific than `unknown` because it limits values to JSON-compatible data.
+  - `Promise<T>` means an async function will eventually produce `T`.
+- Acceptance criteria:
+  - `src/ai/types.ts` exists.
+  - `npm run check` succeeds.
+  - The file exports provider-neutral message, content, tool, usage, request, response, transport, and stream-event types.
+  - No provider-specific HTTP payload types are added yet.
+  - No runtime provider calls are added yet.
+  - No `any` is used.
+  - No new runtime dependency is added.
+- Reviewer checklist:
+  - Confirm the AI boundary does not import OpenAI-specific types.
+  - Confirm tool-call arguments use `JsonObject`, not `any`.
+  - Confirm assistant text and tool-call content are distinguishable by `type`.
+  - Confirm messages are distinguishable by `role`.
+  - Confirm TODO-005 can implement `ChatTransport` without changing these types.
 
 ### TODO-005: Implement OpenAI-Compatible Provider
 
-- Status: pending
-- Scope: Implement one provider adapter that sends chat requests and returns assistant messages with optional tool calls.
+- Status: completed
+- Goal: Implement one real provider adapter that satisfies the `ChatTransport` interface from TODO-004 and can call an OpenAI-compatible `/chat/completions` API.
+- Scope:
+  - Create `src/ai/openai-compatible.ts`.
+  - Use the provider-neutral types from `src/ai/types.ts`.
+  - Send user, assistant, and tool-result messages to an OpenAI-compatible API.
+  - Send optional tool definitions using OpenAI's `tools` format.
+  - Convert the provider response back into `ChatResponse`.
+  - Parse assistant text responses.
+  - Parse assistant tool calls and convert tool-call arguments into `JsonObject`.
+  - Add clear errors for missing API key, HTTP failures, invalid JSON, and malformed provider responses.
+  - Do not build the agent loop yet.
+  - Do not execute any tools yet.
+  - Do not add streaming yet.
+  - Do not add tests yet unless you want extra practice; TODO-014 owns formal tests.
 - Likely files or areas: `src/ai/openai-compatible.ts`, `src/config/config.ts`
 - Dependencies: TODO-003, TODO-004
+- Reference from `pi`:
+  - `pi` has a larger provider layer under [packages/ai/src/providers/](../packages/ai/src/providers/).
+  - ChatRealm should not copy that full registry.
+  - The MVP lesson is the boundary: app code uses `ChatTransport`; provider code knows the OpenAI-compatible wire format.
+- Beginner mental model:
+  - `ChatTransport` is your app's private shape.
+  - OpenAI-compatible chat completions is the provider's public HTTP shape.
+  - `openai-compatible.ts` is the translator between those two worlds.
+  - The rest of ChatRealm should not need to know OpenAI's exact JSON field names.
+- Step-by-step implementation guide:
+  1. Create the provider file.
+     - Create `src/ai/openai-compatible.ts`.
+     - This file should contain runtime code, unlike `src/ai/types.ts`, which only contains types.
+     - Add top-level imports only:
+
+       ```ts
+       import { parseJsonObject } from "../utils/json.js";
+       import type {
+         AssistantContent,
+         AssistantMessage,
+         ChatRequest,
+         ChatResponse,
+         ChatTransport,
+         JsonObject,
+         JsonValue,
+         Message,
+         StopReason,
+         ToolCallContent,
+         ToolDefinition,
+         Usage,
+       } from "./types.js";
+       ```
+
+     - Why `import type` is used:
+       - These imports are TypeScript types only.
+       - They disappear at runtime.
+       - This keeps the generated JavaScript smaller and avoids accidental runtime dependencies.
+     - Keep imports at the top. Do not use dynamic imports.
+  2. Define provider options.
+     - Add an exported interface named `OpenAICompatibleOptions`.
+     - Recommended shape:
+
+       ```ts
+       export interface OpenAICompatibleOptions {
+         apiKey: string;
+         baseUrl?: string;
+       }
+       ```
+
+     - `apiKey` is required because the provider cannot call the API without it.
+     - `baseUrl` is optional because the provider can default to the official OpenAI base URL.
+     - Do not put `model` here for this MVP. The model comes from `ChatRequest.model`.
+  3. Add a default base URL.
+     - Add this constant near the top:
+
+       ```ts
+       const DEFAULT_BASE_URL = "https://api.openai.com/v1";
+       ```
+
+     - This means a normal OpenAI user only needs to configure `apiKey`.
+     - Users of compatible services can still pass a custom `baseUrl`.
+  4. Define minimal raw provider response types.
+     - These types describe only the fields ChatRealm needs from the HTTP response.
+     - Do not model the entire OpenAI API.
+     - Recommended types:
+
+       ```ts
+       interface OpenAIChatCompletionResponse {
+         choices?: OpenAIChoice[];
+         usage?: {
+           prompt_tokens?: number;
+           completion_tokens?: number;
+           total_tokens?: number;
+         };
+       }
+
+       interface OpenAIChoice {
+         finish_reason?: string | null;
+         message?: {
+           content?: string | null;
+           tool_calls?: OpenAIToolCall[];
+         };
+       }
+
+       interface OpenAIToolCall {
+         id?: string;
+         type?: string;
+         function?: {
+           name?: string;
+           arguments?: string;
+         };
+       }
+       ```
+
+     - Why the fields are optional:
+       - External HTTP responses are not trusted.
+       - Optional fields force your code to check before using them.
+       - This is safer than pretending the network always returns the exact shape you want.
+  5. Implement the transport class.
+     - Add a class that implements `ChatTransport`.
+     - Recommended skeleton:
+
+       ```ts
+       export class OpenAICompatibleTransport implements ChatTransport {
+         private readonly apiKey: string;
+         private readonly baseUrl: string;
+
+         constructor(options: OpenAICompatibleOptions) {
+           if (options.apiKey.trim() === "") {
+             throw new Error("Missing OpenAI-compatible API key");
+           }
+
+           this.apiKey = options.apiKey;
+           this.baseUrl = trimTrailingSlash(options.baseUrl ?? DEFAULT_BASE_URL);
+         }
+
+         async complete(request: ChatRequest): Promise<ChatResponse> {
+           // Implementation goes here.
+         }
+       }
+       ```
+
+     - Why a class is useful here:
+       - The API key and base URL are setup values.
+       - `complete` can reuse them for every request.
+       - Later you can swap this transport for a fake transport in tests.
+  6. Add a small URL helper.
+     - Add this function below the class or above it:
+
+       ```ts
+       function trimTrailingSlash(value: string): string {
+         return value.endsWith("/") ? value.slice(0, -1) : value;
+       }
+       ```
+
+     - Why this exists:
+       - Users might configure `https://api.openai.com/v1/` with a trailing slash.
+       - The provider will append `/chat/completions`.
+       - Trimming avoids URLs like `https://api.openai.com/v1//chat/completions`.
+  7. Build the HTTP request body.
+     - Inside `complete`, create a plain object for the OpenAI-compatible API:
+
+       ```ts
+       const body = {
+         model: request.model,
+         messages: toOpenAIMessages(request),
+         tools: request.tools.length > 0 ? request.tools.map(toOpenAITool) : undefined,
+       };
+       ```
+
+     - The `messages` field must use OpenAI roles and content format.
+     - The `tools` field should be omitted when there are no tools.
+     - Do not include streaming fields in this TODO.
+     - Do not include tool execution here; this file only sends definitions and receives tool-call requests.
+  8. Send the HTTP request with `fetch`.
+     - Node 18+ has global `fetch`, so no runtime dependency is needed for this MVP.
+     - Recommended code shape:
+
+       ```ts
+       const response = await fetch(`${this.baseUrl}/chat/completions`, {
+         method: "POST",
+         headers: {
+           "authorization": `Bearer ${this.apiKey}`,
+           "content-type": "application/json",
+         },
+         body: JSON.stringify(body),
+       });
+       ```
+
+     - Header notes:
+       - `authorization` carries the API key.
+       - `content-type` tells the server the body is JSON.
+       - Header names are case-insensitive, so lowercase is fine.
+  9. Handle HTTP errors.
+     - If `response.ok` is false, read the response text and throw a clear error.
+     - Recommended code shape:
+
+       ```ts
+       if (!response.ok) {
+         const errorText = await response.text();
+         throw new Error(
+           `OpenAI-compatible request failed with ${response.status}: ${errorText}`,
+         );
+       }
+       ```
+
+     - This helps you see whether the problem is an invalid key, bad base URL, bad model, or provider-side error.
+     - Do not swallow HTTP errors and return an assistant message; failed HTTP is not a normal assistant response.
+  10. Parse the JSON response.
+      - Read the response body as text first.
+      - Use `parseJsonObject` so invalid JSON produces a clear error.
+      - Recommended code shape:
+
+        ```ts
+        const responseText = await response.text();
+        const json = parseJsonObject(responseText, "OpenAI-compatible response");
+        ```
+
+      - Then convert `json` into `OpenAIChatCompletionResponse` after validation helpers inspect it.
+      - Avoid `any`; use `unknown`, `Record<string, unknown>`, and small helper functions.
+      - Why this step needs more than `JSON.parse`:
+        - `JSON.parse` can tell you whether the text is valid JSON.
+        - It cannot tell you whether the JSON has the shape your provider expects.
+        - A provider response could be valid JSON but still be unusable, for example `{ "error": "bad model" }`.
+        - This step should reject malformed success responses before later code reads fields from them.
+      - Do not write this:
+
+        ```ts
+        const data = await response.json() as OpenAIChatCompletionResponse;
+        ```
+
+      - Why not:
+        - `response.json()` returns untrusted external data.
+        - `as OpenAIChatCompletionResponse` only tells TypeScript to trust you.
+        - It does not check anything at runtime.
+        - If the response is malformed, your code may crash later with a confusing error.
+      - Use this safer flow instead:
+        1. Read response text.
+        2. Parse it with `parseJsonObject`.
+        3. Validate the fields your provider needs.
+        4. Return a small typed object for later steps.
+      - Add a helper to recognize plain objects:
+
+        ```ts
+        function isRecord(value: unknown): value is Record<string, unknown> {
+          return (
+            typeof value === "object" &&
+            value !== null &&
+            !Array.isArray(value)
+          );
+        }
+        ```
+
+      - Why `isRecord` exists:
+        - TypeScript cannot safely read `value.choices` from `unknown`.
+        - After `isRecord(value)` returns true, TypeScript knows `value` is object-like.
+        - It still does not trust individual fields; you must check those separately.
+      - Add a helper that validates the top-level response:
+
+        ```ts
+        function toOpenAIChatCompletionResponse(
+          json: Record<string, unknown>,
+        ): OpenAIChatCompletionResponse {
+          const choices = json.choices;
+
+          if (!Array.isArray(choices)) {
+            throw new Error("OpenAI-compatible response is missing choices");
+          }
+
+          return {
+            choices: choices.map(toOpenAIChoice),
+            usage: toOpenAIUsage(json.usage),
+          };
+        }
+        ```
+
+      - What this helper checks:
+        - `choices` must exist.
+        - `choices` must be an array.
+        - Each item in `choices` is passed to another helper for validation.
+        - `usage` is optional, so it can be converted separately.
+      - Add a helper that validates each choice:
+
+        ```ts
+        function toOpenAIChoice(value: unknown): OpenAIChoice {
+          if (!isRecord(value)) {
+            throw new Error("OpenAI-compatible choice must be an object");
+          }
+
+          const message = value.message;
+
+          if (!isRecord(message)) {
+            throw new Error("OpenAI-compatible choice is missing message");
+          }
+
+          return {
+            finish_reason: readOptionalStringOrNull(value.finish_reason),
+            message: {
+              content: readOptionalStringOrNull(message.content),
+              tool_calls: readOptionalToolCalls(message.tool_calls),
+            },
+          };
+        }
+        ```
+
+      - Why choice validation is separated:
+        - The top-level response only knows `choices` is an array.
+        - Each array item still needs its own checks.
+        - Smaller helpers make TypeScript errors easier to understand.
+      - Add small value helpers:
+
+        ```ts
+        function readOptionalStringOrNull(value: unknown): string | null | undefined {
+          if (value === undefined || value === null || typeof value === "string") {
+            return value;
+          }
+
+          throw new Error("Expected optional string value in OpenAI-compatible response");
+        }
+
+        function readOptionalNumber(value: unknown): number | undefined {
+          if (value === undefined) {
+            return undefined;
+          }
+
+          if (typeof value !== "number") {
+            throw new Error("Expected optional number value in OpenAI-compatible response");
+          }
+
+          return value;
+        }
+        ```
+
+      - Why these helpers are intentionally generic:
+        - They avoid repeating the same `typeof` checks.
+        - They keep the response parser readable.
+        - This MVP does not need perfect field-specific messages yet.
+      - Add a usage helper:
+
+        ```ts
+        function toOpenAIUsage(value: unknown): OpenAIChatCompletionResponse["usage"] {
+          if (value === undefined) {
+            return undefined;
+          }
+
+          if (!isRecord(value)) {
+            throw new Error("OpenAI-compatible usage must be an object");
+          }
+
+          return {
+            prompt_tokens: readOptionalNumber(value.prompt_tokens),
+            completion_tokens: readOptionalNumber(value.completion_tokens),
+            total_tokens: readOptionalNumber(value.total_tokens),
+          };
+        }
+        ```
+
+      - Add a tool-call list helper:
+
+        ```ts
+        function readOptionalToolCalls(value: unknown): OpenAIToolCall[] | undefined {
+          if (value === undefined) {
+            return undefined;
+          }
+
+          if (!Array.isArray(value)) {
+            throw new Error("OpenAI-compatible tool_calls must be an array");
+          }
+
+          return value.map(toOpenAIToolCall);
+        }
+        ```
+
+      - Add a single tool-call helper:
+
+        ```ts
+        function toOpenAIToolCall(value: unknown): OpenAIToolCall {
+          if (!isRecord(value)) {
+            throw new Error("OpenAI-compatible tool call must be an object");
+          }
+
+          const fn = value.function;
+
+          if (!isRecord(fn)) {
+            throw new Error("OpenAI-compatible tool call is missing function");
+          }
+
+          return {
+            id: readOptionalStringOrNull(value.id) ?? undefined,
+            type: readOptionalStringOrNull(value.type) ?? undefined,
+            function: {
+              name: readOptionalStringOrNull(fn.name) ?? undefined,
+              arguments: readOptionalStringOrNull(fn.arguments) ?? undefined,
+            },
+          };
+        }
+        ```
+
+      - After these helpers exist, Step 10 inside `complete` can look like this:
+
+        ```ts
+        const responseText = await response.text();
+        const json = parseJsonObject(responseText, "OpenAI-compatible response");
+        const data = toOpenAIChatCompletionResponse(json);
+        ```
+
+      - Then later steps can use `data.choices` and `data.usage` without re-parsing the raw JSON.
+      - Beginner checks:
+        - If TypeScript says a value is `unknown`, add a runtime check before reading properties from it.
+        - If TypeScript says a property does not exist on `unknown`, you probably forgot `isRecord`.
+        - If TypeScript says a return type does not match, check whether you returned `null` where the interface expects `undefined`.
+        - If a helper throws too early, compare the real provider JSON with the minimal raw response types in Step 4.
+      - What not to do:
+        - Do not use `any`.
+        - Do not trust `response.json()` without validation.
+        - Do not parse tool-call `arguments` in Step 10; Step 14 owns assistant content parsing.
+        - Do not convert to `ChatResponse` in Step 10; Step 13 owns that conversion.
+        - Do not catch malformed response errors here unless you rethrow a clear error.
+  11. Convert ChatRealm messages to OpenAI messages.
+      - Add a helper named `toOpenAIMessages`.
+      - It should:
+        - Add a system message first if `request.systemPrompt` is defined.
+        - Convert user messages to `{ role: "user", content: message.content }`.
+        - Convert assistant text and tool-call content to one assistant message.
+        - Convert tool-result messages to `{ role: "tool", tool_call_id, content }`.
+      - Beginner-friendly first version:
+
+        ```ts
+        function toOpenAIMessages(request: ChatRequest): JsonObject[] {
+          const messages: JsonObject[] = [];
+
+          if (request.systemPrompt !== undefined) {
+            messages.push({
+              role: "system",
+              content: request.systemPrompt,
+            });
+          }
+
+          for (const message of request.messages) {
+            messages.push(toOpenAIMessage(message));
+          }
+
+          return messages;
+        }
+        ```
+
+      - Then add `toOpenAIMessage(message: Message): JsonObject`.
+      - Keep this helper small and use `switch (message.role)`.
+      - Do not support image messages or streaming chunks in this TODO.
+  12. Convert tools to OpenAI tool definitions.
+      - Add a helper named `toOpenAITool`.
+      - Recommended shape:
+
+        ```ts
+        function toOpenAITool(tool: ToolDefinition): JsonObject {
+          return {
+            type: "function",
+            function: {
+              name: tool.name,
+              description: tool.description,
+              parameters: tool.parameters,
+            },
+          };
+        }
+        ```
+
+      - This translates ChatRealm's provider-neutral `ToolDefinition` into OpenAI's function-tool format.
+      - The provider does not execute the tool. It only tells the model which tools exist.
+  13. Convert the provider response to `ChatResponse`.
+      - The happy path is:
+        - Get the first choice.
+        - Read `choice.message.content`.
+        - Read `choice.message.tool_calls`.
+        - Convert them into `AssistantContent[]`.
+        - Convert usage.
+        - Convert finish reason.
+        - Return `{ message }`.
+      - Recommended final shape:
+
+        ```ts
+        const message: AssistantMessage = {
+          role: "assistant",
+          content,
+          model: request.model,
+          usage,
+          stopReason,
+          errorMessage: undefined,
+        };
+
+        return { message };
+        ```
+
+      - If the response has no choices or no message, throw a clear error.
+  14. Parse assistant content.
+      - If `content` is a non-empty string, add:
+
+        ```ts
+        { type: "text", text: content }
+        ```
+
+      - If `tool_calls` exist, convert each function tool call to:
+
+        ```ts
+        {
+          type: "toolCall",
+          id: toolCall.id,
+          name: toolCall.function.name,
+          arguments: parsedArguments,
+        }
+        ```
+
+      - `toolCall.function.arguments` is a JSON string, not an object.
+      - Use `parseJsonObject(argumentsText, "tool call arguments")` to parse it.
+      - Treat missing `id`, missing `name`, or invalid arguments as malformed provider response errors.
+  15. Convert finish reasons.
+      - Add a helper named `toStopReason`.
+      - Recommended mapping:
+
+        ```ts
+        function toStopReason(finishReason: string | null | undefined): StopReason {
+          if (finishReason === "tool_calls") {
+            return "toolUse";
+          }
+
+          if (finishReason === "length") {
+            return "length";
+          }
+
+          if (finishReason === "stop" || finishReason === null || finishReason === undefined) {
+            return "stop";
+          }
+
+          return "error";
+        }
+        ```
+
+      - OpenAI uses `"tool_calls"`; ChatRealm uses `"toolUse"`.
+      - This helper keeps provider-specific naming out of the rest of the app.
+  16. Convert usage.
+      - Add a helper named `toUsage`.
+      - If usage is missing, return `undefined`.
+      - Otherwise map:
+        - `prompt_tokens` to `inputTokens`
+        - `completion_tokens` to `outputTokens`
+        - `total_tokens` to `totalTokens`
+      - If a number is missing, use `0` for this MVP.
+  17. Add a small factory function.
+      - Add this at the bottom:
+
+        ```ts
+        export function createOpenAICompatibleTransport(
+          options: OpenAICompatibleOptions,
+        ): ChatTransport {
+          return new OpenAICompatibleTransport(options);
+        }
+        ```
+
+      - This makes TODO-011 wiring easier.
+      - The rest of the app can call a function instead of directly using `new`.
+  18. Run type checking.
+      - From `ChatRealm/`, run:
+
+        ```powershell
+        npm run check
+        ```
+
+      - Fix all TypeScript errors before moving on.
+      - Common fixes:
+        - If `fetch` is unknown, make sure your TypeScript `lib` includes a modern environment or install/update Node types.
+        - If `JsonObject` rejects a value, check that nested values are JSON-compatible.
+        - If TypeScript asks for return values, make sure every helper returns or throws.
+  19. Optional manual smoke test.
+      - This TODO does not need full CLI wiring.
+      - If you want to manually test the provider, create a temporary script outside committed source or wait until TODO-011.
+      - Do not commit API keys or local smoke-test files.
+- Beginner notes:
+  - `fetch` sends the HTTP request.
+  - `await` pauses until the network response arrives.
+  - `JSON.stringify(body)` turns a JavaScript object into JSON text for the HTTP request.
+  - `response.ok` is true for successful 2xx HTTP statuses.
+  - Provider responses are external data, so validate before trusting fields.
+  - Tool calls are requests from the model; they are not tool results.
+  - Tool execution happens later in the agent loop.
+- Acceptance criteria:
+  - `src/ai/openai-compatible.ts` exists.
+  - It exports `OpenAICompatibleTransport` or a factory that returns `ChatTransport`.
+  - It sends requests to `${baseUrl}/chat/completions`.
+  - It includes the authorization bearer token.
+  - It converts ChatRealm messages into OpenAI-compatible messages.
+  - It converts ChatRealm tool definitions into OpenAI-compatible function tools.
+  - It returns `ChatResponse` with an `AssistantMessage`.
+  - It supports plain text assistant responses.
+  - It supports assistant tool calls with parsed JSON arguments.
+  - It maps usage into `Usage | undefined`.
+  - It maps provider finish reasons into `StopReason`.
+  - HTTP failures and malformed responses produce clear errors.
+  - `npm run check` succeeds.
+  - No agent loop, tool execution, session persistence, or streaming is implemented in this TODO.
+- Reviewer checklist:
+  - Confirm provider-specific JSON shapes are isolated in `src/ai/openai-compatible.ts`.
+  - Confirm `src/ai/types.ts` stays provider-neutral.
+  - Confirm there is no `any`.
+  - Confirm no dynamic imports are used.
+  - Confirm API keys are read from config or options, not hardcoded.
+  - Confirm tool calls are only parsed and returned, not executed.
 
 ### TODO-006: Define Tool Contracts And Registry
 
