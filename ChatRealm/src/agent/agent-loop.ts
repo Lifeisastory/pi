@@ -1,11 +1,11 @@
-import type {
+﻿import type {
     AssistantMessage,
     ChatRequest,
     ChatTransport,
     ToolCallContent,
-} from "../ai/types.js";
+} from "../ai/types";
 
-import type { ToolRegistry } from "../tools/registry.js";
+import type { ToolRegistry } from "../tools/registry";
 
 import {
     appendAssistantMessage,
@@ -13,7 +13,7 @@ import {
     hasRemainingTurns,
     incrementTurn,
     type AgentState,
-} from "./state.js";
+} from "./state";
 
 export interface RunAgentLoopOptions {
     state: AgentState;

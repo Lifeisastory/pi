@@ -1,9 +1,9 @@
-import type { ToolDefinition } from "../ai/types.js";
-import type { AgentTool } from "./types.js";
-import { readFileTool } from "./read-file.js";
-import { searchTool } from "./search.js";
-import { shellTool } from "./shell.js";
-import { writeFileTool } from "./write-file.js";
+﻿import type { ToolDefinition } from "../ai/types";
+import type { AgentTool } from "./types";
+import { readFileTool } from "./read-file";
+import { searchTool } from "./search";
+import { shellTool } from "./shell";
+import { writeFileTool } from "./write-file";
 
 export class ToolRegistry {
     private readonly tools = new Map<string, AgentTool>();

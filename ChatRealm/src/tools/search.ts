@@ -1,8 +1,8 @@
-import { readdir, readFile } from "node:fs/promises";
+﻿import { readdir, readFile } from "node:fs/promises";
 import { relative } from "node:path";
-import type { JsonObject } from "../ai/types.js";
-import type { AgentTool } from "./types.js";
-import { resolveInsideCwd } from "./path.js";
+import type { JsonObject } from "../ai/types";
+import type { AgentTool } from "./types";
+import { resolveInsideCwd } from "./path";
 
 const SKIPPED_DIRECTORIES = new Set([
     ".git",

@@ -1,5 +1,5 @@
-import type { ChatTransport } from "../ai/types.js";
-import type { ToolRegistry } from "../tools/registry.js";
+﻿import type { ChatTransport } from "../ai/types";
+import type { ToolRegistry } from "../tools/registry";
 
 export interface RunAgentOptions {
     prompt: string;

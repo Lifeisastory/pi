@@ -1,13 +1,12 @@
-import { appendUserMessage, createAgentState } from "./agent/state.js";
-import { buildDefaultSystemPrompt } from "./agent/prompt.js";
-import { runAgentLoop } from "./agent/agent-loop.js";
-import { RunAgentOptions } from "./agent/agent.js";
-import { createOpenAICompatibleTransport } from "./ai/openai-compatible.js";
-import type { AssistantMessage } from "./ai/types.js";
-import { getHelpText, parseArgs } from "./cli/args.js";
-import { loadConfig } from "./config/config.js";
-import { createDefaultToolRegistry } from "./tools/registry.js";
-import { loadSessionMessages, saveSessionMessages } from "./session/store.js";
+﻿import { appendUserMessage, createAgentState } from "./agent/state";
+import { buildDefaultSystemPrompt } from "./agent/prompt";
+import { runAgentLoop } from "./agent/agent-loop";
+import { createOpenAICompatibleTransport } from "./ai/openai-compatible";
+import type { AssistantMessage } from "./ai/types";
+import { getHelpText, parseArgs } from "./cli/args";
+import { loadConfig } from "./config/config";
+import { createDefaultToolRegistry } from "./tools/registry";
+import { loadSessionMessages, saveSessionMessages } from "./session/store";
 
 const OPENAI_COMPATIBLE_PROVIDER = "openai-compatible";
 const DEFAULT_MODEL = "gpt-4.1-mini";

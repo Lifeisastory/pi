@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+﻿import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
 import type {
@@ -13,9 +13,9 @@ import type {
     ToolResultMessage,
     Usage,
     UserMessage,
-} from "../ai/types.js";
+} from "../ai/types";
 
-import { parseJsonObject } from "../utils/json.js";
+import { parseJsonObject } from "../utils/json";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -36,7 +36,7 @@ const DEFAULT_SESSION_NAME = "default";
 
 export function getSessionPath(options: SessionStoreOptions): string {
     const sessionName = options.sessionName ?? DEFAULT_SESSION_NAME;
-    return resolve(options.cwd, ".chatrealm", "sessions", `${sessionName}.json`);
+    return resolve(options.cwd, ".chatrealm", "sessions", `${sessionName}.json`).replaceAll("\\", "/");
 }
 
 export async function loadSessionMessages(
@@ -315,7 +315,6 @@ function parseNumber(value: unknown, sourceName: string): number {
 
     return value;
 }
-
 function parseStopReason(value: unknown, sourceName: string): StopReason {
     if (
         value === "stop" ||

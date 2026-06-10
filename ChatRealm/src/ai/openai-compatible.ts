@@ -1,4 +1,4 @@
-import { parseJsonObject } from "../utils/json.js";
+﻿import { parseJsonObject } from "../utils/json";
 import type {
     AssistantContent,
     AssistantMessage,
@@ -11,7 +11,7 @@ import type {
     StopReason,
     ToolDefinition,
     Usage,
-} from "./types.js";
+} from "./types";
 
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";
 

@@ -1,11 +1,11 @@
-import type {
+﻿import type {
     AssistantMessage,
     Message,
     ToolResultMessage,
     UserMessage,
-} from "../ai/types.js";
-import type { ToolResult } from "../tools/types.js";
-import { buildDefaultSystemPrompt } from "./prompt.js";
+} from "../ai/types";
+import type { ToolResult } from "../tools/types";
+import { buildDefaultSystemPrompt } from "./prompt";
 
 function touch(state: AgentState): void {
     state.run.updatedAt = new Date().toISOString();

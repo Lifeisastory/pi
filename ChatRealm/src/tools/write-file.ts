@@ -1,8 +1,8 @@
-import { mkdir, writeFile } from "node:fs/promises";
+﻿import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { JsonObject } from "../ai/types.js";
-import { resolveInsideCwd } from "./path.js";
-import type { AgentTool } from "./types.js";
+import type { JsonObject } from "../ai/types";
+import { resolveInsideCwd } from "./path";
+import type { AgentTool } from "./types";
 
 function readRequiredString(
     args: JsonObject,

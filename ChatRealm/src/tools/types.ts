@@ -1,7 +1,7 @@
-import type {
+﻿import type {
     JsonObject,
     ToolDefinition,
-} from "../ai/types.js";
+} from "../ai/types";
 
 export interface ToolContext {
     cwd: string;

@@ -1,6 +1,6 @@
-import { exec, type ExecException } from "node:child_process";
-import type { JsonObject } from "../ai/types.js";
-import type { AgentTool } from "./types.js";
+﻿import { exec, type ExecException } from "node:child_process";
+import type { JsonObject } from "../ai/types";
+import type { AgentTool } from "./types";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 120_000;

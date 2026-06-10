@@ -5323,9 +5323,458 @@ ChatRealm/
 ### TODO-013：添加错误处理和面向用户的输出
 
 - 状态：pending
-- 范围：将 provider errors、tool errors、JSON parse errors 和 CLI usage errors 规范化为简洁的终端输出。
-- 可能涉及的文件或区域：`src/utils/errors.ts`、`src/main.ts`、`src/agent/agent-loop.ts`
-- 依赖：TODO-011
+- 目标：把原始 thrown errors 替换成一个小而稳定的错误格式化层，让终端用户看到简短、有用的消息，并让程序用正确 exit code 退出。
+- 范围：
+  - 在 `src/utils/errors.ts` 中添加可复用的 error utility module。
+  - 把常见失败归类到少量 user-facing categories。
+  - 更新 `src/main.ts`，让 CLI usage/config/provider/session errors 统一打印。
+  - tool execution errors 继续作为 agent loop 内部的 tool-result messages 返回，但文本要更简洁。
+  - 保持实现很小；现在不要添加 logging frameworks、retry logic、telemetry 或 rich diagnostics。
+- 不在范围内：
+  - 不要添加正式测试；TODO-014 负责 test files。
+  - 不要添加 streaming output。
+  - 不要添加 TUI renderer。
+  - 除非 agent loop 成功完成，否则不要保存 failed partial sessions。
+  - 不要添加 provider-specific recovery 或 automatic retries。
+- 可能涉及的文件或区域：`src/utils/errors.ts`、`src/main.ts`、`src/agent/agent-loop.ts`，可选 `src/session/store.ts`
+- 依赖：TODO-011、TODO-012
+- 新手心智模型：
+  - 抛出 `Error` 会停止正常执行，并跳到最近的 `catch`。
+  - `main().catch(...)` 是 CLI 的最后安全网。
+  - 对 missing prompt 或 missing API key 这种正常可预期失败，不应该让用户看到 stack trace。
+  - 开发者仍然希望代码清晰，所以只在一个地方分类并格式化错误。
+  - Tool failures 和 CLI failures 不一样：tool 调用失败通常应该作为 `toolResult` 返回给模型，而不是让整个程序 crash。
+- 本 MVP 的 error categories：
+  - `usage`：用户命令用错了，比如 missing prompt 或 unknown option。
+  - `config`：必要本地配置缺失或无效，比如 missing API key。
+  - `provider`：模型 API request 失败或返回了无效 response。
+  - `session`：session JSON 无法加载或验证失败。
+  - `agent`：agent loop 失败，比如 max turns exhausted。
+  - `tool`：模型使用本地 tool 时发生失败。
+  - `unknown`：非 Error 值或意外失败到达 CLI 边界。
+- 建议输出风格：
+  - 对 expected failures，消息保持一行。
+  - 给消息加短前缀：
+
+    ```text
+    Usage error: Missing prompt
+    Config error: Missing API key. Set CHATREALM_API_KEY or apiKey in chatrealm.config.json
+    Provider error: OpenAI-compatible request failed with 401
+    Session error: Invalid JSON in C:/project/.chatrealm/sessions/default.json
+    Agent error: Agent loop reached max turns (10) before a final answer
+    ```
+
+  - 默认不要打印 stack traces。
+  - wrap error 时把原始 `Error` 保留在 `cause` 中。
+- 分步实现指南：
+  1. 创建 `src/utils/errors.ts`。
+     - 这个文件只放通用 error helpers。
+     - 不要在这里 import agent、provider、CLI 或 session modules。
+     - 把这个文件理解成失败类型的小词汇表。
+  2. 定义 category type。
+     - 添加：
+
+       ```ts
+       export type UserFacingErrorCategory =
+         | "usage"
+         | "config"
+         | "provider"
+         | "session"
+         | "agent"
+         | "tool"
+         | "unknown";
+       ```
+
+     - 这是 TypeScript union type。
+     - 它表示只允许这些精确字符串。
+     - 如果你写错成 `"confg"`，TypeScript 会报错。
+  3. 定义格式化后的 CLI result type。
+     - 添加：
+
+       ```ts
+       export interface FormattedCliError {
+         message: string;
+         exitCode: number;
+       }
+       ```
+
+     - `message` 是 `main.ts` 打印到 `stderr` 的内容。
+     - `exitCode` 是 `process.exitCode` 应该设置的值。
+     - 本 MVP 中，除 help 已经成功退出外，所有失败都用 exit code `1`。
+  4. 添加 `UserFacingError` class。
+     - 使用显式字段，不要使用 TypeScript parameter properties。
+     - 推荐形状：
+
+       ```ts
+       export class UserFacingError extends Error {
+         readonly category: UserFacingErrorCategory;
+         readonly exitCode: number;
+
+         constructor(
+           category: UserFacingErrorCategory,
+           message: string,
+           options: { exitCode?: number; cause?: unknown } = {},
+         ) {
+           super(message, { cause: options.cause });
+           this.name = "UserFacingError";
+           this.category = category;
+           this.exitCode = options.exitCode ?? 1;
+         }
+       }
+       ```
+
+     - 这个 class 的作用：
+       - 让代码能表达“这个错误可以安全展示给用户”。
+       - 它把 category 和 exit code 跟 message 放在一起。
+       - 它仍然是普通 JavaScript `Error`。
+     - 不要做的事：
+       - 不要用 `any`。
+       - 不要使用 `constructor(readonly category: ...)` 这种 parameter properties。
+       - 不要在 class 里写 `console.error`。
+  5. 添加 category label helper。
+     - 添加：
+
+       ```ts
+       function categoryLabel(category: UserFacingErrorCategory): string {
+         switch (category) {
+           case "usage":
+             return "Usage error";
+           case "config":
+             return "Config error";
+           case "provider":
+             return "Provider error";
+           case "session":
+             return "Session error";
+           case "agent":
+             return "Agent error";
+           case "tool":
+             return "Tool error";
+           case "unknown":
+             return "Unexpected error";
+         }
+       }
+       ```
+
+     - 对新手来说，`switch` 比 map 更直观。
+     - union type 很小，所以维护成本低。
+  6. 添加 `formatCliError`。
+     - 添加：
+
+       ```ts
+       export function formatCliError(error: unknown): FormattedCliError {
+         if (error instanceof UserFacingError) {
+           return {
+             message: `${categoryLabel(error.category)}: ${error.message}`,
+             exitCode: error.exitCode,
+           };
+         }
+
+         if (error instanceof Error) {
+           return {
+             message: `${categoryLabel("unknown")}: ${error.message}`,
+             exitCode: 1,
+           };
+         }
+
+         return {
+           message: `${categoryLabel("unknown")}: ${String(error)}`,
+           exitCode: 1,
+         };
+       }
+       ```
+
+     - 这个函数接收 `unknown`，因为 JavaScript 可以 throw 任意值。
+     - 它返回简单 object，这样 `main.ts` 不需要知道格式化规则。
+  7. 添加一个小 wrapping helper。
+     - 添加：
+
+       ```ts
+       export function toUserFacingError(
+         category: UserFacingErrorCategory,
+         error: unknown,
+         fallbackMessage: string,
+       ): UserFacingError {
+         if (error instanceof UserFacingError) {
+           return error;
+         }
+
+         if (error instanceof Error) {
+           return new UserFacingError(category, error.message, { cause: error });
+         }
+
+         return new UserFacingError(category, fallbackMessage, { cause: error });
+       }
+       ```
+
+     - 这个 helper 适合包住 provider/session calls。
+     - 保持简单。现在不要试图识别所有 provider error shape。
+  8. 更新 `src/main.ts` imports。
+     - 添加：
+
+       ```ts
+       import {
+         UserFacingError,
+         formatCliError,
+         toUserFacingError,
+       } from "./utils/errors";
+       ```
+
+     - 使用 ChatRealm 当前采用的无扩展名 import 风格。
+  9. 更新 `src/main.ts` 的 top-level catch。
+     - 把当前 catch body 替换为：
+
+       ```ts
+       main().catch((error: unknown) => {
+         const formatted = formatCliError(error);
+         console.error(formatted.message);
+         process.exitCode = formatted.exitCode;
+       });
+       ```
+
+     - 这段逻辑应该放在 `main.ts` 的原因：
+       - `main.ts` 是 process boundary。
+       - 只有 `main.ts` 应该决定什么内容到达 terminal。
+       - 底层模块应该 throw useful errors，不应该直接 print。
+  10. 把 expected CLI/config errors 转成 `UserFacingError`。
+      - Missing prompt 改为：
+
+        ```ts
+        throw new UserFacingError("usage", "Missing prompt");
+        ```
+
+      - Unsupported provider 改为：
+
+        ```ts
+        throw new UserFacingError("usage", `Unsupported provider: ${provider}`);
+        ```
+
+      - Missing API key 改为：
+
+        ```ts
+        throw new UserFacingError(
+          "config",
+          "Missing API key. Set CHATREALM_API_KEY or apiKey in chatrealm.config.json",
+        );
+        ```
+
+      - 这些都是用户可以修正的 expected failures，所以不应显示为 `Unexpected error`。
+  11. 包住 session loading。
+      - `loadSessionMessages` 可能因为 JSON corrupt 或 shape 错误而失败。
+      - 在 `main.ts` 中只包住 load call：
+
+        ```ts
+        let savedMessages;
+
+        try {
+          savedMessages = await loadSessionMessages({ cwd });
+        } catch (error) {
+          throw toUserFacingError("session", error, "Failed to load session");
+        }
+
+        state.messages.push(...savedMessages);
+        ```
+
+      - 如果 TypeScript inference 让你困惑，可以 import `Message` type 后写：
+
+        ```ts
+        let savedMessages: Message[] = [];
+        ```
+
+      - 不要在这里 catch 整个 `main()`；只包住你想分类的那一步操作。
+  12. 包住 provider/agent loop 边界。
+      - `runAgentLoop` 可能因为这些原因失败：
+        - provider request failed
+        - provider response invalid
+        - max turns exhausted
+      - MVP 先保持简单：
+        - 如果 error message 以 `Agent loop reached max turns` 开头，归类为 `agent`
+        - 否则归类为 `provider`
+      - 推荐形状：
+
+        ```ts
+        let result;
+
+        try {
+          result = await runAgentLoop({
+            state,
+            transport,
+            tools,
+          });
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            error.message.startsWith("Agent loop reached max turns")
+          ) {
+            throw toUserFacingError("agent", error, "Agent loop failed");
+          }
+
+          throw toUserFacingError("provider", error, "Provider request failed");
+        }
+        ```
+
+      - 这不完美，但对 MVP 足够。
+      - 除非已经真的需要，否则不要添加 custom provider error classes。
+  13. 包住 session saving。
+      - 如果模型完成后保存失败，清楚告诉用户：
+
+        ```ts
+        try {
+          await saveSessionMessages({ cwd }, result.state.messages);
+        } catch (error) {
+          throw toUserFacingError("session", error, "Failed to save session");
+        }
+        ```
+
+      - 这意味着如果保存失败，成功的模型回答可能不会打印。
+      - 对 MVP 来说可以接受，因为 TODO-012 之后 persistence 是 command contract 的一部分。
+  14. Tool errors 留在 `agent-loop.ts` 里面。
+      - `executeToolCall` 已经 catch tool failures 并追加 `toolResult`。
+      - 如果需要，只改进 formatting helper。
+      - 一个好的 MVP tool error 文本：
+
+        ```text
+        Tool error: <message>
+        ```
+
+      - 推荐 helper：
+
+        ```ts
+        function formatToolExecutionError(error: unknown): string {
+          if (error instanceof Error) {
+            return `Tool error: ${error.message}`;
+          }
+
+          return `Tool error: ${String(error)}`;
+        }
+        ```
+
+      - 普通 tool failures 不要从 `executeToolCall` throw。
+      - 模型需要看到 tool error，才能恢复或解释。
+  15. 手动检查：help 仍然成功。
+      - 从 `ChatRealm/` 运行：
+
+        ```powershell
+        npm run dev -- --help
+        ```
+
+      - 预期：
+        - usage text 打印到 stdout
+        - process 成功退出
+        - 不出现 `Usage error:` 前缀
+  16. 手动检查：missing prompt。
+      - 运行：
+
+        ```powershell
+        npm run dev
+        ```
+
+      - 预期 stderr：
+
+        ```text
+        Usage error: Missing prompt
+        ```
+
+      - 预期 exit code：`1`。
+  17. 手动检查：unsupported provider。
+      - 运行：
+
+        ```powershell
+        npm run dev -- -p "hi" --provider fake
+        ```
+
+      - 预期 stderr：
+
+        ```text
+        Usage error: Unsupported provider: fake
+        ```
+  18. 手动检查：missing API key。
+      - 只有当你没有设置 `CHATREALM_API_KEY`，且 config file 里没有 `apiKey` 时运行：
+
+        ```powershell
+        npm run dev -- -p "hi"
+        ```
+
+      - 预期 stderr：
+
+        ```text
+        Config error: Missing API key. Set CHATREALM_API_KEY or apiKey in chatrealm.config.json
+        ```
+
+      - 如果你已经配置了 API key，可以临时在干净 temp directory 运行，或把 `CHATREALM_CONFIG` 指向一个不存在的 temp file 来检查。
+  19. 手动检查：corrupt session JSON。
+      - 在项目外创建一个临时目录。
+      - 在里面创建 `.chatrealm/sessions/default.json`，内容写成 invalid JSON，例如：
+
+        ```json
+        {
+        ```
+
+      - 使用 `--cwd` 指向这个 temp directory，并传一个 fake 或 real API key value：
+
+        ```powershell
+        npm run dev -- -p "hi" --cwd "C:\path\to\temp"
+        ```
+
+      - 预期 stderr 以这段开头：
+
+        ```text
+        Session error:
+        ```
+
+      - 检查后清理 temp directory。
+  20. 可选 real-provider check。
+      - 只有当你有有效 API key，并接受发起一次模型请求时运行：
+
+        ```powershell
+        npm run dev -- -p "Say exactly: ok"
+        ```
+
+      - 预期：
+        - 正常 assistant output 打印到 stdout
+        - 不出现 error prefix
+        - 成功后 session file 仍然保存
+  21. 运行类型检查。
+      - 从 `ChatRealm/` 运行：
+
+        ```powershell
+        npm run check
+        ```
+
+      - 从 repository root 再运行：
+
+        ```powershell
+        npm run check
+        ```
+
+      - 进入下一个 TODO 前修复所有 errors。
+- 最小预期文件内容：
+  - `src/utils/errors.ts` 导出 `UserFacingError`、`formatCliError` 和 `toUserFacingError`。
+  - `src/main.ts` 通过 `formatCliError` 格式化所有 top-level errors。
+  - `src/main.ts` 对 expected usage/config failures 抛出 `UserFacingError`。
+  - `src/main.ts` 把 session load/save failures wrap 为 `session`。
+  - `src/main.ts` 把 provider 或 loop failures wrap 为 `provider` 或 `agent`。
+  - `src/agent/agent-loop.ts` 继续把 tool failures 保留在 `toolResult` messages 中。
+- 验收标准：
+  - `--help` 仍然打印 help 并成功退出。
+  - Missing prompt 打印 `Usage error: Missing prompt`。
+  - Unsupported provider 打印 `Usage error: Unsupported provider: <name>`。
+  - Missing API key 打印 `Config error: ...`。
+  - Corrupt session JSON 打印 `Session error: ...`，而不是静默覆盖该文件。
+  - Max-turn exhaustion 打印 `Agent error: ...`。
+  - Provider request failures 打印 `Provider error: ...`。
+  - Tool execution failures 被返回为 tool-result content，不会自己 crash process。
+  - Expected failures 不打印 stack trace。
+  - 不使用 `any`。
+  - 不使用 dynamic imports。
+  - 从 `ChatRealm/` 执行 `npm run check` 成功。
+  - 从 repository root 执行 root `npm run check` 成功。
+- Reviewer checklist：
+  - 确认 `src/utils/errors.ts` 没有 import application modules。
+  - 确认只有 `main.ts` 打印 top-level errors。
+  - 确认 expected user mistakes 没有被标成 unknown errors。
+  - 确认 session corruption 会 loud failure，并且不会覆盖 corrupt file。
+  - 确认 agent loop 仍然把 tool errors 返回给模型。
+  - 确认没有新增 retry、logging、telemetry 或 TUI 行为。
 
 ### TODO-014：添加聚焦 MVP 测试
 
@@ -5353,7 +5802,7 @@ ChatRealm/
 
 ## 下一个可执行项
 
-- TODO-003：添加配置加载
+- TODO-013：添加错误处理和面向用户的输出
 
 ## 假设
 

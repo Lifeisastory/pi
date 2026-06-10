@@ -5378,9 +5378,459 @@ ChatRealm/
 ### TODO-013: Add Error Handling And User-Facing Output
 
 - Status: pending
-- Scope: Normalize provider errors, tool errors, JSON parse errors, and CLI usage errors into concise terminal output.
-- Likely files or areas: `src/utils/errors.ts`, `src/main.ts`, `src/agent/agent-loop.ts`
-- Dependencies: TODO-011
+- Goal: Replace raw thrown errors with a small, predictable error formatting layer so terminal users see short, useful messages and the program exits with the right code.
+- Scope:
+  - Add a reusable error utility module in `src/utils/errors.ts`.
+  - Classify common failures into a small set of user-facing categories.
+  - Update `src/main.ts` so CLI usage/config/provider/session errors print consistently.
+  - Keep tool execution errors as tool-result messages inside the agent loop, but make their text concise.
+  - Keep the implementation small; do not add logging frameworks, retry logic, telemetry, or rich diagnostics yet.
+- Out of scope:
+  - Do not add tests yet; TODO-014 owns formal test files.
+  - Do not add streaming output.
+  - Do not add a TUI renderer.
+  - Do not save failed partial sessions unless the agent loop completed successfully.
+  - Do not add provider-specific recovery or automatic retries.
+- Likely files or areas: `src/utils/errors.ts`, `src/main.ts`, `src/agent/agent-loop.ts`, optional `src/session/store.ts`
+- Dependencies: TODO-011, TODO-012
+- Beginner mental model:
+  - Throwing an `Error` stops normal execution and jumps to the nearest `catch`.
+  - `main().catch(...)` is the final safety net for the CLI.
+  - The user should not see stack traces during normal expected failures such as missing prompt or missing API key.
+  - The developer still wants clear internal code, so classify errors once and format them in one place.
+  - Tool failures are different from CLI failures: a failed tool call should usually be returned to the model as a `toolResult`, not crash the whole program.
+- Error categories for this MVP:
+  - `usage`: the user ran the command incorrectly, for example missing prompt or unknown option.
+  - `config`: required local configuration is missing or invalid, for example missing API key.
+  - `provider`: the model API request failed or returned an invalid response.
+  - `session`: session JSON could not be loaded or validated.
+  - `agent`: the agent loop failed, for example max turns were exhausted.
+  - `tool`: a local tool failed while the model was using it.
+  - `unknown`: a non-Error value or unexpected failure reached the CLI boundary.
+- Suggested output style:
+  - Keep messages to one line for expected failures.
+  - Prefix messages with a short label:
+
+    ```text
+    Usage error: Missing prompt
+    Config error: Missing API key. Set CHATREALM_API_KEY or apiKey in chatrealm.config.json
+    Provider error: OpenAI-compatible request failed with 401
+    Session error: Invalid JSON in C:/project/.chatrealm/sessions/default.json
+    Agent error: Agent loop reached max turns (10) before a final answer
+    ```
+
+  - Do not print stack traces by default.
+  - Keep the underlying `Error` object available as `cause` when wrapping errors.
+- Step-by-step implementation guide:
+  1. Create `src/utils/errors.ts`.
+     - This file should contain generic error helpers only.
+     - Do not import agent, provider, CLI, or session modules here.
+     - Think of this file as a small shared vocabulary for failures.
+  2. Define the category type.
+     - Add:
+
+       ```ts
+       export type UserFacingErrorCategory =
+         | "usage"
+         | "config"
+         | "provider"
+         | "session"
+         | "agent"
+         | "tool"
+         | "unknown";
+       ```
+
+     - This is a TypeScript union type.
+     - It means only those exact strings are allowed.
+     - If you mistype `"confg"`, TypeScript will catch it.
+  3. Define a formatted CLI result type.
+     - Add:
+
+       ```ts
+       export interface FormattedCliError {
+         message: string;
+         exitCode: number;
+       }
+       ```
+
+     - `message` is what `main.ts` prints to `stderr`.
+     - `exitCode` is what `process.exitCode` should become.
+     - For this MVP, use exit code `1` for all failures except help, which already exits successfully.
+  4. Add a `UserFacingError` class.
+     - Use explicit fields, not TypeScript parameter properties.
+     - Recommended shape:
+
+       ```ts
+       export class UserFacingError extends Error {
+         readonly category: UserFacingErrorCategory;
+         readonly exitCode: number;
+
+         constructor(
+           category: UserFacingErrorCategory,
+           message: string,
+           options: { exitCode?: number; cause?: unknown } = {},
+         ) {
+           super(message, { cause: options.cause });
+           this.name = "UserFacingError";
+           this.category = category;
+           this.exitCode = options.exitCode ?? 1;
+         }
+       }
+       ```
+
+     - Why this class exists:
+       - It lets code say "this is safe to show to the user".
+       - It carries the category and exit code beside the message.
+       - It still behaves like a normal JavaScript `Error`.
+     - What not to do:
+       - Do not use `any`.
+       - Do not use constructor parameter properties such as `constructor(readonly category: ...)`.
+       - Do not put `console.error` inside this class.
+  5. Add a category label helper.
+     - Add:
+
+       ```ts
+       function categoryLabel(category: UserFacingErrorCategory): string {
+         switch (category) {
+           case "usage":
+             return "Usage error";
+           case "config":
+             return "Config error";
+           case "provider":
+             return "Provider error";
+           case "session":
+             return "Session error";
+           case "agent":
+             return "Agent error";
+           case "tool":
+             return "Tool error";
+           case "unknown":
+             return "Unexpected error";
+         }
+       }
+       ```
+
+     - A `switch` is clearer than a map for beginners.
+     - Because the union type is small, this is easy to maintain.
+  6. Add `formatCliError`.
+     - Add:
+
+       ```ts
+       export function formatCliError(error: unknown): FormattedCliError {
+         if (error instanceof UserFacingError) {
+           return {
+             message: `${categoryLabel(error.category)}: ${error.message}`,
+             exitCode: error.exitCode,
+           };
+         }
+
+         if (error instanceof Error) {
+           return {
+             message: `${categoryLabel("unknown")}: ${error.message}`,
+             exitCode: 1,
+           };
+         }
+
+         return {
+           message: `${categoryLabel("unknown")}: ${String(error)}`,
+           exitCode: 1,
+         };
+       }
+       ```
+
+     - This function accepts `unknown` because JavaScript can throw anything.
+     - It returns a simple object so `main.ts` does not need to know formatting rules.
+  7. Add a small wrapping helper.
+     - Add:
+
+       ```ts
+       export function toUserFacingError(
+         category: UserFacingErrorCategory,
+         error: unknown,
+         fallbackMessage: string,
+       ): UserFacingError {
+         if (error instanceof UserFacingError) {
+           return error;
+         }
+
+         if (error instanceof Error) {
+           return new UserFacingError(category, error.message, { cause: error });
+         }
+
+         return new UserFacingError(category, fallbackMessage, { cause: error });
+       }
+       ```
+
+     - This is useful around provider/session calls.
+     - Keep it simple. Do not try to inspect every possible provider error shape yet.
+  8. Update imports in `src/main.ts`.
+     - Add:
+
+       ```ts
+       import {
+         UserFacingError,
+         formatCliError,
+         toUserFacingError,
+       } from "./utils/errors";
+       ```
+
+     - Use the no-extension import style currently used by ChatRealm.
+  9. Update the top-level catch in `src/main.ts`.
+     - Replace the current catch body with:
+
+       ```ts
+       main().catch((error: unknown) => {
+         const formatted = formatCliError(error);
+         console.error(formatted.message);
+         process.exitCode = formatted.exitCode;
+       });
+       ```
+
+     - Why this belongs in `main.ts`:
+       - `main.ts` is the process boundary.
+       - Only `main.ts` should decide what reaches the terminal.
+       - Lower-level modules should throw useful errors, not print directly.
+  10. Convert expected CLI/config errors to `UserFacingError`.
+      - Missing prompt should become:
+
+        ```ts
+        throw new UserFacingError("usage", "Missing prompt");
+        ```
+
+      - Unsupported provider should become:
+
+        ```ts
+        throw new UserFacingError("usage", `Unsupported provider: ${provider}`);
+        ```
+
+      - Missing API key should become:
+
+        ```ts
+        throw new UserFacingError(
+          "config",
+          "Missing API key. Set CHATREALM_API_KEY or apiKey in chatrealm.config.json",
+        );
+        ```
+
+      - These are expected user-correctable failures, so they should not print as `Unexpected error`.
+  11. Wrap session loading.
+      - `loadSessionMessages` can fail because JSON is corrupt or has the wrong shape.
+      - In `main.ts`, wrap only the load call:
+
+        ```ts
+        let savedMessages;
+
+        try {
+          savedMessages = await loadSessionMessages({ cwd });
+        } catch (error) {
+          throw toUserFacingError("session", error, "Failed to load session");
+        }
+
+        state.messages.push(...savedMessages);
+        ```
+
+      - TypeScript can infer the variable if you initialize it carefully.
+      - If inference is confusing, import `Message` as a type and write:
+
+        ```ts
+        let savedMessages: Message[] = [];
+        ```
+
+      - Do not catch all of `main()` at this point; only wrap the operation you want to classify.
+  12. Wrap the provider/agent loop boundary.
+      - `runAgentLoop` can fail because:
+        - the provider request failed
+        - the provider response was invalid
+        - max turns were exhausted
+      - Keep the MVP simple:
+        - if the error message starts with `Agent loop reached max turns`, classify it as `agent`
+        - otherwise classify it as `provider`
+      - Suggested shape:
+
+        ```ts
+        let result;
+
+        try {
+          result = await runAgentLoop({
+            state,
+            transport,
+            tools,
+          });
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            error.message.startsWith("Agent loop reached max turns")
+          ) {
+            throw toUserFacingError("agent", error, "Agent loop failed");
+          }
+
+          throw toUserFacingError("provider", error, "Provider request failed");
+        }
+        ```
+
+      - This is not perfect, but it is enough for the MVP.
+      - Do not add custom provider error classes yet unless you already need them.
+  13. Wrap session saving.
+      - If saving fails after the model completed, tell the user clearly:
+
+        ```ts
+        try {
+          await saveSessionMessages({ cwd }, result.state.messages);
+        } catch (error) {
+          throw toUserFacingError("session", error, "Failed to save session");
+        }
+        ```
+
+      - This means a successful model response may not print if saving fails.
+      - That is acceptable for the MVP because persistence is part of the command contract after TODO-012.
+  14. Keep tool errors inside `agent-loop.ts`.
+      - `executeToolCall` already catches tool failures and appends a `toolResult`.
+      - Improve only the formatting helper if needed.
+      - Good MVP output for a thrown tool error:
+
+        ```text
+        Tool error: <message>
+        ```
+
+      - Suggested helper:
+
+        ```ts
+        function formatToolExecutionError(error: unknown): string {
+          if (error instanceof Error) {
+            return `Tool error: ${error.message}`;
+          }
+
+          return `Tool error: ${String(error)}`;
+        }
+        ```
+
+      - Do not throw from `executeToolCall` for normal tool failures.
+      - The model needs to see the tool error so it can recover or explain it.
+  15. Manual check: help still succeeds.
+      - From `ChatRealm/`, run:
+
+        ```powershell
+        npm run dev -- --help
+        ```
+
+      - Expected:
+        - usage text prints to stdout
+        - process exits successfully
+        - no `Usage error:` prefix appears
+  16. Manual check: missing prompt.
+      - Run:
+
+        ```powershell
+        npm run dev
+        ```
+
+      - Expected stderr:
+
+        ```text
+        Usage error: Missing prompt
+        ```
+
+      - Expected exit code: `1`.
+  17. Manual check: unsupported provider.
+      - Run:
+
+        ```powershell
+        npm run dev -- -p "hi" --provider fake
+        ```
+
+      - Expected stderr:
+
+        ```text
+        Usage error: Unsupported provider: fake
+        ```
+  18. Manual check: missing API key.
+      - Run this only if you do not have `CHATREALM_API_KEY` set and your config file does not contain `apiKey`:
+
+        ```powershell
+        npm run dev -- -p "hi"
+        ```
+
+      - Expected stderr:
+
+        ```text
+        Config error: Missing API key. Set CHATREALM_API_KEY or apiKey in chatrealm.config.json
+        ```
+
+      - If you do have an API key configured, temporarily run in a clean temp directory or set `CHATREALM_CONFIG` to a missing temp file for this check.
+  19. Manual check: corrupt session JSON.
+      - Create a temporary directory outside the project.
+      - Inside it, create `.chatrealm/sessions/default.json` with invalid JSON, for example:
+
+        ```json
+        {
+        ```
+
+      - Run ChatRealm with `--cwd` pointing at that temp directory and with a fake or real API key value:
+
+        ```powershell
+        npm run dev -- -p "hi" --cwd "C:\path\to\temp"
+        ```
+
+      - Expected stderr starts with:
+
+        ```text
+        Session error:
+        ```
+
+      - Clean up the temp directory after the check.
+  20. Optional real-provider check.
+      - Only run this if you have a valid API key and accept making one model request:
+
+        ```powershell
+        npm run dev -- -p "Say exactly: ok"
+        ```
+
+      - Expected:
+        - normal assistant output prints to stdout
+        - no error prefix appears
+        - session file is still saved after success
+  21. Run type checking.
+      - From `ChatRealm/`, run:
+
+        ```powershell
+        npm run check
+        ```
+
+      - From the repository root, also run:
+
+        ```powershell
+        npm run check
+        ```
+
+      - Fix all errors before moving on.
+- Minimal expected file contents:
+  - `src/utils/errors.ts` exports `UserFacingError`, `formatCliError`, and `toUserFacingError`.
+  - `src/main.ts` formats all top-level errors through `formatCliError`.
+  - `src/main.ts` throws `UserFacingError` for expected usage/config failures.
+  - `src/main.ts` wraps session load/save failures as `session`.
+  - `src/main.ts` wraps provider or loop failures as `provider` or `agent`.
+  - `src/agent/agent-loop.ts` keeps tool failures inside `toolResult` messages.
+- Acceptance criteria:
+  - `--help` still prints help and exits successfully.
+  - Missing prompt prints `Usage error: Missing prompt`.
+  - Unsupported provider prints `Usage error: Unsupported provider: <name>`.
+  - Missing API key prints `Config error: ...`.
+  - Corrupt session JSON prints a `Session error: ...` message instead of silently overwriting the file.
+  - Max-turn exhaustion prints an `Agent error: ...` message.
+  - Provider request failures print a `Provider error: ...` message.
+  - Tool execution failures are returned as tool-result content and do not crash the process by themselves.
+  - No stack trace is printed for expected failures.
+  - No `any` is used.
+  - No dynamic imports are used.
+  - `npm run check` succeeds from `ChatRealm/`.
+  - Root `npm run check` succeeds from the repository root.
+- Reviewer checklist:
+  - Confirm `src/utils/errors.ts` does not import application modules.
+  - Confirm `main.ts` is the only place that prints top-level errors.
+  - Confirm expected user mistakes are not labeled as unknown errors.
+  - Confirm session corruption fails loudly and does not overwrite the corrupt file.
+  - Confirm the agent loop still returns tool errors to the model.
+  - Confirm no new retry, logging, telemetry, or TUI behavior was added.
 
 ### TODO-014: Add Focused MVP Tests
 
@@ -5408,7 +5858,7 @@ ChatRealm/
 
 ## Next Executable Item
 
-- TODO-003: Add Configuration Loading
+- TODO-013: Add Error Handling And User-Facing Output
 
 ## Assumptions
 

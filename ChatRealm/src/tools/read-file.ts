@@ -1,7 +1,7 @@
-import { readFile } from "node:fs/promises";
-import type { JsonObject } from "../ai/types.js";
-import type { AgentTool } from "./types.js";
-import { resolveInsideCwd } from "./path.js";
+﻿import { readFile } from "node:fs/promises";
+import type { JsonObject } from "../ai/types";
+import type { AgentTool } from "./types";
+import { resolveInsideCwd } from "./path";
 
 function readRequiredString(
     args: JsonObject,

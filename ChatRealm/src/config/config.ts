@@ -1,7 +1,7 @@
-import { existsSync, readFileSync } from "node:fs";
+﻿import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { parseJsonObject, readOptionalString } from "../utils/json.js";
+import { parseJsonObject, readOptionalString } from "../utils/json";
 
 export interface AppConfig {
     apiKey: string | undefined;
