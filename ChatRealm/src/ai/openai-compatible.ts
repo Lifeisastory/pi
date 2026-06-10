@@ -21,32 +21,34 @@ export interface OpenAICompatibleOptions {
 }
 
 interface OpenAIChatCompletionResponse {
-    choices?: OpenAIChoice[];
-    usage?: {
-        prompt_tokens?: number;
-        completion_tokens?: number;
-        total_tokens?: number;
-    };
+    choices: OpenAIChoice[];
+    usage?: OpenAIUsage;
 }
 
 interface OpenAIChoice {
-    finish_reason?: string | null;
-    message?: {
-        content?: string | null;
-        tool_calls?: OpenAIToolCall[];
-    };
+    finishReason?: string | null;
+    message: OpenAIMessage;
+}
+
+interface OpenAIMessage {
+    content?: string | null;
+    toolCalls?: OpenAIToolCall[];
 }
 
 interface OpenAIToolCall {
     id?: string;
     type?: string;
-    function?: {
-        name?: string;
-        arguments?: string;
-    };
+    functionName?: string;
+    functionArguments?: string;
 }
 
-export class OpenAICompatibleTransport implements ChatTransport {
+interface OpenAIUsage {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+}
+
+class OpenAICompatibleTransport implements ChatTransport {
     private readonly apiKey: string;
     private readonly baseUrl: string;
 
@@ -55,8 +57,10 @@ export class OpenAICompatibleTransport implements ChatTransport {
             throw new Error("Missing OpenAI-compatible API key");
         }
 
+        const baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
+
         this.apiKey = options.apiKey;
-        this.baseUrl = trimTrailingSlash(options.baseUrl ?? DEFAULT_BASE_URL);
+        this.baseUrl = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
     }
 
     async complete(request: ChatRequest): Promise<ChatResponse> {
@@ -87,25 +91,19 @@ export class OpenAICompatibleTransport implements ChatTransport {
 
         const responseText = await response.text();
         const json = parseJsonObject(responseText, "OpenAI-compatible response");
-        const data = toOpenAIChatCompletionResponse(json);
-        const choice = data.choices?.[0];
+        const data = parseChatCompletionResponse(json);
+        const choice = data.choices[0];
 
         if (choice === undefined) {
             throw new Error("OpenAI-compatible response did not include a choice");
         }
 
-        const providerMessage = choice.message;
-
-        if (providerMessage === undefined) {
-            throw new Error("OpenAI-compatible response choice did not include a message");
-        }
-
         const message: AssistantMessage = {
             role: "assistant",
-            content: toAssistantContent(providerMessage),
+            content: toAssistantContent(choice.message),
             model: request.model,
             usage: toUsage(data.usage),
-            stopReason: toStopReason(choice.finish_reason),
+            stopReason: toStopReason(choice.finishReason),
             errorMessage: undefined,
         };
 
@@ -119,10 +117,6 @@ export function createOpenAICompatibleTransport(
     return new OpenAICompatibleTransport(options);
 }
 
-function trimTrailingSlash(value: string): string {
-    return value.endsWith("/") ? value.slice(0, -1) : value;
-}
-
 function toOpenAIMessages(request: ChatRequest): JsonObject[] {
     const messages: JsonObject[] = [];
 
@@ -134,30 +128,29 @@ function toOpenAIMessages(request: ChatRequest): JsonObject[] {
     }
 
     for (const message of request.messages) {
-        messages.push(toOpenAIMessage(message));
+        switch (message.role) {
+            case "user":
+                messages.push({
+                    role: "user",
+                    content: message.content,
+                });
+                break;
+
+            case "assistant":
+                messages.push(toOpenAIAssistantMessage(message));
+                break;
+
+            case "toolResult":
+                messages.push({
+                    role: "tool",
+                    tool_call_id: message.toolCallId,
+                    content: message.content,
+                });
+                break;
+        }
     }
 
     return messages;
-}
-
-function toOpenAIMessage(message: Message): JsonObject {
-    switch (message.role) {
-        case "user":
-            return {
-                role: "user",
-                content: message.content,
-            };
-
-        case "assistant":
-            return toOpenAIAssistantMessage(message);
-
-        case "toolResult":
-            return {
-                role: "tool",
-                tool_call_id: message.toolCallId,
-                content: message.content,
-            };
-    }
 }
 
 function toOpenAIAssistantMessage(message: AssistantMessage): JsonObject {
@@ -203,7 +196,7 @@ function toOpenAITool(tool: ToolDefinition): JsonObject {
     };
 }
 
-function toOpenAIChatCompletionResponse(
+function parseChatCompletionResponse(
     json: Record<string, unknown>,
 ): OpenAIChatCompletionResponse {
     const choices = json.choices;
@@ -213,12 +206,12 @@ function toOpenAIChatCompletionResponse(
     }
 
     return {
-        choices: choices.map(toOpenAIChoice),
-        usage: toOpenAIUsage(json.usage),
+        choices: choices.map(parseChoice),
+        usage: parseUsage(json.usage),
     };
 }
 
-function toOpenAIChoice(value: unknown): OpenAIChoice {
+function parseChoice(value: unknown): OpenAIChoice {
     if (!isRecord(value)) {
         throw new Error("OpenAI-compatible choice must be an object");
     }
@@ -229,44 +222,22 @@ function toOpenAIChoice(value: unknown): OpenAIChoice {
         throw new Error("OpenAI-compatible choice is missing message");
     }
 
+    const toolCalls = message.tool_calls;
+
+    if (toolCalls !== undefined && !Array.isArray(toolCalls)) {
+        throw new Error("OpenAI-compatible tool_calls must be an array");
+    }
+
     return {
-        finish_reason: readOptionalStringOrNull(value.finish_reason),
+        finishReason: readOptionalStringOrNull(value.finish_reason),
         message: {
             content: readOptionalStringOrNull(message.content),
-            tool_calls: readOptionalToolCalls(message.tool_calls),
+            toolCalls: toolCalls?.map(parseToolCall),
         },
     };
 }
 
-function toOpenAIUsage(value: unknown): OpenAIChatCompletionResponse["usage"] {
-    if (value === undefined) {
-        return undefined;
-    }
-
-    if (!isRecord(value)) {
-        throw new Error("OpenAI-compatible usage must be an object");
-    }
-
-    return {
-        prompt_tokens: readOptionalNumber(value.prompt_tokens),
-        completion_tokens: readOptionalNumber(value.completion_tokens),
-        total_tokens: readOptionalNumber(value.total_tokens),
-    };
-}
-
-function readOptionalToolCalls(value: unknown): OpenAIToolCall[] | undefined {
-    if (value === undefined) {
-        return undefined;
-    }
-
-    if (!Array.isArray(value)) {
-        throw new Error("OpenAI-compatible tool_calls must be an array");
-    }
-
-    return value.map(toOpenAIToolCall);
-}
-
-function toOpenAIToolCall(value: unknown): OpenAIToolCall {
+function parseToolCall(value: unknown): OpenAIToolCall {
     if (!isRecord(value)) {
         throw new Error("OpenAI-compatible tool call must be an object");
     }
@@ -280,16 +251,28 @@ function toOpenAIToolCall(value: unknown): OpenAIToolCall {
     return {
         id: readOptionalStringOrNull(value.id) ?? undefined,
         type: readOptionalStringOrNull(value.type) ?? undefined,
-        function: {
-            name: readOptionalStringOrNull(fn.name) ?? undefined,
-            arguments: readOptionalStringOrNull(fn.arguments) ?? undefined,
-        },
+        functionName: readOptionalStringOrNull(fn.name) ?? undefined,
+        functionArguments: readOptionalStringOrNull(fn.arguments) ?? undefined,
     };
 }
 
-function toAssistantContent(
-    message: NonNullable<OpenAIChoice["message"]>,
-): AssistantContent[] {
+function parseUsage(value: unknown): OpenAIUsage | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+
+    if (!isRecord(value)) {
+        throw new Error("OpenAI-compatible usage must be an object");
+    }
+
+    return {
+        inputTokens: readOptionalNumber(value.prompt_tokens),
+        outputTokens: readOptionalNumber(value.completion_tokens),
+        totalTokens: readOptionalNumber(value.total_tokens),
+    };
+}
+
+function toAssistantContent(message: OpenAIMessage): AssistantContent[] {
     const content: AssistantContent[] = [];
 
     if (message.content !== undefined && message.content !== null && message.content !== "") {
@@ -299,7 +282,7 @@ function toAssistantContent(
         });
     }
 
-    for (const toolCall of message.tool_calls ?? []) {
+    for (const toolCall of message.toolCalls ?? []) {
         content.push(toToolCallContent(toolCall));
     }
 
@@ -315,46 +298,39 @@ function toToolCallContent(toolCall: OpenAIToolCall): AssistantContent {
         throw new Error("OpenAI-compatible tool call is missing id");
     }
 
-    if (toolCall.function === undefined) {
-        throw new Error("OpenAI-compatible tool call is missing function");
-    }
-
-    const name = toolCall.function.name;
-    const argumentsText = toolCall.function.arguments;
-
-    if (name === undefined || name === "") {
+    if (toolCall.functionName === undefined || toolCall.functionName === "") {
         throw new Error("OpenAI-compatible tool call is missing function name");
     }
 
-    if (argumentsText === undefined) {
+    if (toolCall.functionArguments === undefined) {
         throw new Error("OpenAI-compatible tool call is missing function arguments");
     }
 
     const parsedArguments = parseJsonObject(
-        argumentsText,
-        `OpenAI-compatible tool call ${name} arguments`,
+        toolCall.functionArguments,
+        `OpenAI-compatible tool call ${toolCall.functionName} arguments`,
     );
 
     return {
         type: "toolCall",
         id: toolCall.id,
-        name,
+        name: toolCall.functionName,
         arguments: toJsonObject(
             parsedArguments,
-            `OpenAI-compatible tool call ${name} arguments`,
+            `OpenAI-compatible tool call ${toolCall.functionName} arguments`,
         ),
     };
 }
 
-function toUsage(usage: OpenAIChatCompletionResponse["usage"]): Usage | undefined {
+function toUsage(usage: OpenAIUsage | undefined): Usage | undefined {
     if (usage === undefined) {
         return undefined;
     }
 
     return {
-        inputTokens: usage.prompt_tokens ?? 0,
-        outputTokens: usage.completion_tokens ?? 0,
-        totalTokens: usage.total_tokens ?? 0,
+        inputTokens: usage.inputTokens ?? 0,
+        outputTokens: usage.outputTokens ?? 0,
+        totalTokens: usage.totalTokens ?? 0,
     };
 }
 
