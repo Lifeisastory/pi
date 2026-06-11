@@ -1,6 +1,6 @@
 {
     "baseUrl": "https://api.deepseek.com",
-    "apiKey": "sk-3339c30cb14643db805b1a58a7216d76",
-    "model": "deepseek-v4",
+    "apiKey": "",
+    "model": "deepseek-v4-flash",
     "cwd": "."
 }
