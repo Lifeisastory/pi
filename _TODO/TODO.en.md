@@ -5834,16 +5834,24 @@ ChatRealm/
 
 ### TODO-014: Add Focused MVP Tests
 
-- Status: pending
+- Status: completed
 - Scope: Cover CLI parsing, registry lookup, fake-provider agent loop, max-turn handling, and tool error propagation.
-- Likely files or areas: `test/cli-args.test.ts`, `test/tool-registry.test.ts`, `test/agent-loop.test.ts`
+- Completion notes:
+  - Added focused Node test runner coverage for CLI parsing, registry behavior, fake-provider agent loop behavior, max-turn exhaustion, and tool execution error propagation.
+  - Added a `test:unit` script and included test files in TypeScript checking.
+  - Normalized the session store smoke import so the root relative-import check passes.
+  - Verification passed: `npm run test:unit` from `ChatRealm/`, `npm run check` from `ChatRealm/`, and `npm run check` from the repository root.
+- Likely files or areas: [ChatRealm/test/cli-args.test.ts](../ChatRealm/test/cli-args.test.ts), [ChatRealm/test/tool-registry.test.ts](../ChatRealm/test/tool-registry.test.ts), [ChatRealm/test/agent-loop.test.ts](../ChatRealm/test/agent-loop.test.ts), [ChatRealm/package.json](../ChatRealm/package.json), [ChatRealm/tsconfig.json](../ChatRealm/tsconfig.json), [ChatRealm/session-store-smoke.ts](../ChatRealm/session-store-smoke.ts)
 - Dependencies: TODO-002, TODO-006, TODO-010, TODO-013
 
 ### TODO-015: Write MVP Usage Documentation
 
-- Status: pending
+- Status: completed
 - Scope: Document setup, environment variables, example commands, current limitations, and the next architecture milestones.
-- Likely files or areas: `README.md`
+- Completion notes:
+  - Added MVP usage documentation covering setup, configuration sources, environment variables, example commands, local tools, session persistence, current limitations, and next architecture milestones.
+  - This was a documentation-only change; no code verification command was required for this TODO.
+- Likely files or areas: [ChatRealm/README.md](../ChatRealm/README.md)
 - Dependencies: TODO-011, TODO-014
 
 ## Dependencies Between TODO Items
@@ -5858,7 +5866,7 @@ ChatRealm/
 
 ## Next Executable Item
 
-- TODO-013: Add Error Handling And User-Facing Output
+- None. The MVP TODO plan has no remaining planned item.
 
 ## Assumptions
 

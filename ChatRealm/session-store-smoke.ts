@@ -5,7 +5,7 @@ import {
   getSessionPath,
   loadSessionMessages,
   saveSessionMessages,
-} from "./src/session/store.js";
+} from "./src/session/store";
 
 const cwd = await mkdtemp(join(tmpdir(), "chatrealm-session-"));
 

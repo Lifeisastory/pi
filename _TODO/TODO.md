@@ -5778,16 +5778,24 @@ ChatRealm/
 
 ### TODO-014：添加聚焦 MVP 测试
 
-- 状态：pending
+- 状态：completed
 - 范围：覆盖 CLI parsing、registry lookup、fake-provider agent loop、max-turn handling 和 tool error propagation。
-- 可能涉及的文件或区域：`test/cli-args.test.ts`、`test/tool-registry.test.ts`、`test/agent-loop.test.ts`
+- 完成说明：
+  - 已添加聚焦的 Node test runner 覆盖：CLI parsing、registry 行为、fake-provider agent loop、max-turn exhaustion 和 tool execution error propagation。
+  - 已添加 `test:unit` 脚本，并把 test files 纳入 TypeScript checking。
+  - 已规范 session store smoke 的 import，使 root relative-import check 通过。
+  - 验证已通过：在 `ChatRealm/` 下执行 `npm run test:unit`，在 `ChatRealm/` 下执行 `npm run check`，以及在 repository root 执行 `npm run check`。
+- 可能涉及的文件或区域：[ChatRealm/test/cli-args.test.ts](../ChatRealm/test/cli-args.test.ts)、[ChatRealm/test/tool-registry.test.ts](../ChatRealm/test/tool-registry.test.ts)、[ChatRealm/test/agent-loop.test.ts](../ChatRealm/test/agent-loop.test.ts)、[ChatRealm/package.json](../ChatRealm/package.json)、[ChatRealm/tsconfig.json](../ChatRealm/tsconfig.json)、[ChatRealm/session-store-smoke.ts](../ChatRealm/session-store-smoke.ts)
 - 依赖：TODO-002、TODO-006、TODO-010、TODO-013
 
 ### TODO-015：编写 MVP 使用文档
 
-- 状态：pending
+- 状态：completed
 - 范围：记录 setup、environment variables、example commands、current limitations 和后续 architecture milestones。
-- 可能涉及的文件或区域：`README.md`
+- 完成说明：
+  - 已添加 MVP 使用文档，覆盖 setup、configuration sources、environment variables、example commands、local tools、session persistence、current limitations 和后续 architecture milestones。
+  - 本次是 documentation-only change；此 TODO 不需要运行 code verification command。
+- 可能涉及的文件或区域：[ChatRealm/README.md](../ChatRealm/README.md)
 - 依赖：TODO-011、TODO-014
 
 ## TODO 项之间的依赖关系
@@ -5802,7 +5810,7 @@ ChatRealm/
 
 ## 下一个可执行项
 
-- TODO-013：添加错误处理和面向用户的输出
+- 无。MVP TODO 计划已没有剩余计划项。
 
 ## 假设
 

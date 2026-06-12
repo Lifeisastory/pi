@@ -107,9 +107,9 @@ async function executeToolCall(
 
 function formatToolExecutionError(error: unknown): string {
     if (error instanceof Error) {
-        return error.message;
+        return `Tool error: ${error.message}`;
     }
 
-    return "Tool execution failed with a non-Error value";
+    return `Tool error: ${String(error)}`;
 }
 

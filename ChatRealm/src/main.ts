@@ -7,16 +7,20 @@ import { getHelpText, parseArgs } from "./cli/args";
 import { loadConfig } from "./config/config";
 import { createDefaultToolRegistry } from "./tools/registry";
 import { loadSessionMessages, saveSessionMessages } from "./session/store";
+import {
+  UserFacingError,
+  formatCliError,
+  toUserFacingError,
+} from "./utils/errors";
 
 const OPENAI_COMPATIBLE_PROVIDER = "openai-compatible";
 const DEFAULT_MODEL = "gpt-4.1-mini";
 
 main().catch((error: unknown) => {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(message);
-  process.exitCode = 1;
+  const formatted = formatCliError(error);
+  console.error(formatted.message);
+  process.exitCode = formatted.exitCode;
 });
-
 async function main(): Promise<void> {
   const parsed = parseArgs(process.argv.slice(2));
 
@@ -26,7 +30,7 @@ async function main(): Promise<void> {
   }
 
   if (parsed.prompt === undefined) {
-    throw new Error("Missing prompt");
+    throw new UserFacingError("usage", "Missing prompt");
   }
 
   const config = loadConfig();
@@ -35,13 +39,14 @@ async function main(): Promise<void> {
   const provider = parsed.provider ?? OPENAI_COMPATIBLE_PROVIDER;
 
   if (provider !== OPENAI_COMPATIBLE_PROVIDER) {
-    throw new Error(`Unsupported provider: ${provider}`);
+    throw new UserFacingError("usage", `Unsupported provider: ${provider}`);
   }
 
   const apiKey = config.apiKey;
 
   if (apiKey === undefined) {
-    throw new Error(
+    throw new UserFacingError(
+      "config",
       "Missing API key. Set CHATREALM_API_KEY or apiKey in chatrealm.config.json",
     );
   }
@@ -64,18 +69,44 @@ async function main(): Promise<void> {
     systemPrompt: buildDefaultSystemPrompt(),
   });
 
-  state.messages.push(...await loadSessionMessages({ cwd }));
+  let savedMessages;
+
+  try {
+    savedMessages = await loadSessionMessages({ cwd });
+  } catch (error) {
+    throw toUserFacingError("session", error, "Failed to load session");
+  }
+
+  state.messages.push(...savedMessages);
 
   appendUserMessage(state, parsed.prompt);
 
 
-  const result = await runAgentLoop({
-    state,
-    transport,
-    tools,
-  });
+  let result;
 
-  await saveSessionMessages({ cwd }, result.state.messages);
+  try {
+    result = await runAgentLoop({
+      state,
+      transport,
+      tools,
+    });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.startsWith("Agent loop reached max turns")
+    ) {
+      throw toUserFacingError("agent", error, "Agent loop failed");
+    }
+
+    throw toUserFacingError("provider", error, "Provider request failed");
+  }
+
+
+  try {
+    await saveSessionMessages({ cwd }, result.state.messages);
+  } catch (error) {
+    throw toUserFacingError("session", error, "Failed to save session");
+  }
 
   const text = renderAssistantText(result.finalMessage);
 
