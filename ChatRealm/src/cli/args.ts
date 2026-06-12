@@ -78,7 +78,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
 export function getHelpText(): string {
     return [
     "Usage:",
-    "  agent [options] [prompt]",
+    "  chatrealm [options] [prompt]",
+    "  chatrealm",
     "",
     "Options:",
     "  -p, --prompt <text>     Prompt text to send to the agent",
@@ -86,5 +87,8 @@ export function getHelpText(): string {
     "  --provider <name>       Provider name override",
     "  --cwd <path>            Working directory override",
     "  -h, --help              Show help",
+    "",
+    "Interactive:",
+    "  Run without a prompt to enter interactive mode.",
   ].join("\n");
 }

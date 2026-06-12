@@ -6,11 +6,23 @@ This project is a learning implementation, not a production agent.
 
 ## Setup
 
-Install dependencies from th	ealm directory:
+Install dependencies from the ChatRealm directory:
 
 ```powershell
 cd ChatRealm
 npm install --ignore-scripts
+```
+
+Expose the local terminal command:
+
+```powershell
+npm link --ignore-scripts
+```
+
+After linking, run ChatRealm directly:
+
+```powershell
+chatrealm --help
 ```
 
 Check TypeScript:
@@ -76,31 +88,45 @@ The only supported provider name is `openai-compatible`.
 Show help:
 
 ```powershell
-npm run dev -- --help
+chatrealm --help
+```
+
+Enter interactive mode:
+
+```powershell
+chatrealm
+```
+
+Interactive mode supports these slash commands:
+
+```text
+/help
+/exit
+/quit
 ```
 
 Run with an explicit prompt:
 
 ```powershell
-npm run dev -- -p "Say exactly: ok"
+chatrealm -p "Say exactly: ok"
 ```
 
 Run with positional prompt text:
 
 ```powershell
-npm run dev -- write a short summary of this project
+chatrealm write a short summary of this project
 ```
 
 Override model and working directory:
 
 ```powershell
-npm run dev -- -p "Inspect the project" --model gpt-4.1-mini --cwd D:\My\Project\pi\ChatRealm
+chatrealm -p "Inspect the project" --model gpt-4.1-mini --cwd D:\My\Project\pi\ChatRealm
 ```
 
 Select the provider explicitly:
 
 ```powershell
-npm run dev -- -p "Say hi" --provider openai-compatible
+chatrealm -p "Say hi" --provider openai-compatible
 ```
 
 ## Local Tools
@@ -130,7 +156,7 @@ The repository root `.gitignore` ignores `ChatRealm/.chatrealm/`, but a differen
 
 ## Current Limitations
 
-- Print mode only; there is no TUI, RPC mode, or streaming renderer.
+- Print and basic interactive modes only; there is no TUI, RPC mode, or streaming renderer.
 - One OpenAI-compatible provider path; there is no provider registry.
 - Tool execution has no approval workflow.
 - The shell tool runs local commands in the configured working directory.

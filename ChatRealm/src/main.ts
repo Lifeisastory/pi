@@ -1,12 +1,17 @@
-﻿import { appendUserMessage, createAgentState } from "./agent/state";
-import { buildDefaultSystemPrompt } from "./agent/prompt";
-import { runAgentLoop } from "./agent/agent-loop";
+import {
+  renderAssistantText,
+  runAgentPrompt,
+} from "./agent/run-prompt";
 import { createOpenAICompatibleTransport } from "./ai/openai-compatible";
-import type { AssistantMessage } from "./ai/types";
-import { getHelpText, parseArgs } from "./cli/args";
+import type { ChatTransport, Message } from "./ai/types";
+import { getHelpText, parseArgs, type ParsedArgs } from "./cli/args";
+import { startInteractiveSession } from "./cli/interactive";
 import { loadConfig } from "./config/config";
-import { createDefaultToolRegistry } from "./tools/registry";
-import { loadSessionMessages, saveSessionMessages } from "./session/store";
+import { loadSessionMessages } from "./session/store";
+import {
+  createDefaultToolRegistry,
+  type ToolRegistry,
+} from "./tools/registry";
 import {
   UserFacingError,
   formatCliError,
@@ -16,11 +21,20 @@ import {
 const OPENAI_COMPATIBLE_PROVIDER = "openai-compatible";
 const DEFAULT_MODEL = "gpt-4.1-mini";
 
+interface Runtime {
+  cwd: string;
+  model: string;
+  apiKey: string | undefined;
+  baseUrl: string | undefined;
+  tools: ToolRegistry;
+}
+
 main().catch((error: unknown) => {
   const formatted = formatCliError(error);
   console.error(formatted.message);
   process.exitCode = formatted.exitCode;
 });
+
 async function main(): Promise<void> {
   const parsed = parseArgs(process.argv.slice(2));
 
@@ -29,96 +43,72 @@ async function main(): Promise<void> {
     return;
   }
 
+  const runtime = createRuntime(parsed);
+  const savedMessages = await loadSavedMessages(runtime.cwd);
+
   if (parsed.prompt === undefined) {
-    throw new UserFacingError("usage", "Missing prompt");
+    await startInteractiveSession({
+      ...runtime,
+      createTransport: () => createTransport(runtime),
+      messages: savedMessages,
+    });
+    return;
   }
 
+  const result = await runAgentPrompt({
+    ...runtime,
+    transport: createTransport(runtime),
+    messages: savedMessages,
+    prompt: parsed.prompt,
+  });
+  const text = renderAssistantText(result.finalMessage);
+
+  if (text !== "") {
+    console.log(text);
+  }
+}
+
+function createRuntime(parsed: ParsedArgs): Runtime {
   const config = loadConfig();
-
-
   const provider = parsed.provider ?? OPENAI_COMPATIBLE_PROVIDER;
 
   if (provider !== OPENAI_COMPATIBLE_PROVIDER) {
     throw new UserFacingError("usage", `Unsupported provider: ${provider}`);
   }
 
-  const apiKey = config.apiKey;
+  const model = parsed.model ?? config.model ?? DEFAULT_MODEL;
+  const cwd = parsed.cwd ?? config.cwd;
+  const tools = createDefaultToolRegistry();
 
-  if (apiKey === undefined) {
+  return {
+    cwd,
+    model,
+    apiKey: config.apiKey,
+    baseUrl: config.baseUrl,
+    tools,
+  };
+}
+
+function createTransport(runtime: Runtime): ChatTransport {
+  const apiKey = runtime.apiKey;
+
+  if (apiKey === undefined || apiKey.trim() === "") {
     throw new UserFacingError(
       "config",
       "Missing API key. Set CHATREALM_API_KEY or apiKey in chatrealm.config.json",
     );
   }
 
-  const model = parsed.model ?? config.model ?? DEFAULT_MODEL;
-  const cwd = parsed.cwd ?? config.cwd;
-
-
-  const transport = createOpenAICompatibleTransport({
+  return createOpenAICompatibleTransport({
     apiKey,
-    baseUrl: config.baseUrl,
+    baseUrl: runtime.baseUrl,
   });
+}
 
-  const tools = createDefaultToolRegistry();
-
-
-  const state = createAgentState({
-    cwd,
-    model,
-    systemPrompt: buildDefaultSystemPrompt(),
-  });
-
-  let savedMessages;
-
+async function loadSavedMessages(cwd: string): Promise<Message[]> {
   try {
-    savedMessages = await loadSessionMessages({ cwd });
+    return await loadSessionMessages({ cwd });
   } catch (error) {
     throw toUserFacingError("session", error, "Failed to load session");
   }
-
-  state.messages.push(...savedMessages);
-
-  appendUserMessage(state, parsed.prompt);
-
-
-  let result;
-
-  try {
-    result = await runAgentLoop({
-      state,
-      transport,
-      tools,
-    });
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message.startsWith("Agent loop reached max turns")
-    ) {
-      throw toUserFacingError("agent", error, "Agent loop failed");
-    }
-
-    throw toUserFacingError("provider", error, "Provider request failed");
-  }
-
-
-  try {
-    await saveSessionMessages({ cwd }, result.state.messages);
-  } catch (error) {
-    throw toUserFacingError("session", error, "Failed to save session");
-  }
-
-  const text = renderAssistantText(result.finalMessage);
-
-  if (text !== "") {
-    console.log(text);
-  }
-
-}
-
-function renderAssistantText(message: AssistantMessage): string {
-  return message.content
-    .filter((content) => content.type === "text")
-    .map((content) => content.text)
-    .join("\n");
 }

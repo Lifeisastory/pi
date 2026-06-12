@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "bin": {
+    "chatrealm": "./bin/chatrealm.mjs"
+  },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "check": "tsc --noEmit",
@@ -15,9 +18,11 @@
   "license": "ISC",
   "type": "module",
   "private": true,
+  "dependencies": {
+    "tsx": "4.22.4"
+  },
   "devDependencies": {
     "@types/node": "25.9.2",
-    "tsx": "4.22.4",
     "typescript": "6.0.3"
   }
 }
