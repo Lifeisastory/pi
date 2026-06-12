@@ -4,6 +4,7 @@ import type {
     AssistantMessage,
     ChatRequest,
     ChatResponse,
+    ChatStreamEvent,
     ChatTransport,
     JsonObject,
     JsonValue,
@@ -46,6 +47,43 @@ interface OpenAIUsage {
     inputTokens?: number;
     outputTokens?: number;
     totalTokens?: number;
+    inputCacheHitTokens?: number;
+    inputCacheMissTokens?: number;
+}
+
+interface OpenAIChatCompletionStreamChunk {
+    choices: OpenAIStreamChoice[];
+    usage?: OpenAIUsage;
+}
+
+interface OpenAIStreamChoice {
+    finishReason?: string | null;
+    delta: OpenAIStreamDelta;
+}
+
+interface OpenAIStreamDelta {
+    content?: string | null;
+    toolCalls?: OpenAIToolCallDelta[];
+}
+
+interface OpenAIToolCallDelta {
+    index: number;
+    id?: string;
+    type?: string;
+    functionName?: string;
+    functionArguments?: string;
+}
+
+interface ToolCallAccumulator {
+    id: string | undefined;
+    type: string | undefined;
+    functionName: string;
+    functionArguments: string;
+}
+
+interface SseEventText {
+    event: string;
+    remainingBuffer: string;
 }
 
 class OpenAICompatibleTransport implements ChatTransport {
@@ -64,30 +102,7 @@ class OpenAICompatibleTransport implements ChatTransport {
     }
 
     async complete(request: ChatRequest): Promise<ChatResponse> {
-        const body: JsonObject = {
-            model: request.model,
-            messages: toOpenAIMessages(request),
-        };
-
-        if (request.tools.length > 0) {
-            body.tools = request.tools.map(toOpenAITool);
-        }
-
-        const response = await fetch(`${this.baseUrl}/chat/completions`, {
-            method: "POST",
-            headers: {
-                authorization: `Bearer ${this.apiKey}`,
-                "content-type": "application/json",
-            },
-            body: JSON.stringify(body),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(
-                `OpenAI-compatible request failed with ${response.status}: ${errorText}`,
-            );
-        }
+        const response = await this.fetchChatCompletions(createRequestBody(request, false));
 
         const responseText = await response.text();
         const json = parseJsonObject(responseText, "OpenAI-compatible response");
@@ -108,6 +123,153 @@ class OpenAICompatibleTransport implements ChatTransport {
         };
 
         return { message };
+    }
+
+    async *stream(request: ChatRequest): AsyncIterable<ChatStreamEvent> {
+        const response = await this.fetchChatCompletions(createRequestBody(request, true));
+
+        if (response.body === null) {
+            throw new Error("OpenAI-compatible streaming response did not include a body");
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        const textParts: string[] = [];
+        const toolCalls = new Map<number, ToolCallAccumulator>();
+        let finishReason: string | null | undefined;
+        let usage: Usage | undefined;
+
+        while (true) {
+            const result = await reader.read();
+
+            if (result.done) {
+                break;
+            }
+
+            buffer += decoder.decode(result.value, { stream: true });
+
+            for (const eventText of takeSseEvents(buffer)) {
+                buffer = eventText.remainingBuffer;
+
+                const data = readSseData(eventText.event);
+
+                if (data === undefined || data === "[DONE]") {
+                    continue;
+                }
+
+                const chunk = parseStreamChunk(
+                    parseJsonObject(data, "OpenAI-compatible stream chunk"),
+                );
+
+                usage = toUsage(chunk.usage) ?? usage;
+
+                for (const choice of chunk.choices) {
+                    finishReason = choice.finishReason ?? finishReason;
+
+                    if (choice.delta.content !== undefined && choice.delta.content !== null) {
+                        textParts.push(choice.delta.content);
+                        yield {
+                            type: "textDelta",
+                            delta: choice.delta.content,
+                        };
+                    }
+
+                    for (const toolCall of choice.delta.toolCalls ?? []) {
+                        accumulateToolCallDelta(toolCalls, toolCall);
+                    }
+                }
+            }
+        }
+
+        buffer += decoder.decode();
+
+        for (const eventText of takeSseEvents(buffer)) {
+            buffer = eventText.remainingBuffer;
+
+            const data = readSseData(eventText.event);
+
+            if (data === undefined || data === "[DONE]") {
+                continue;
+            }
+
+            const chunk = parseStreamChunk(
+                parseJsonObject(data, "OpenAI-compatible stream chunk"),
+            );
+
+            usage = toUsage(chunk.usage) ?? usage;
+
+            for (const choice of chunk.choices) {
+                finishReason = choice.finishReason ?? finishReason;
+
+                if (choice.delta.content !== undefined && choice.delta.content !== null) {
+                    textParts.push(choice.delta.content);
+                    yield {
+                        type: "textDelta",
+                        delta: choice.delta.content,
+                    };
+                }
+
+                for (const toolCall of choice.delta.toolCalls ?? []) {
+                    accumulateToolCallDelta(toolCalls, toolCall);
+                }
+            }
+        }
+
+        const content: AssistantContent[] = [];
+        const text = textParts.join("");
+
+        if (text !== "") {
+            content.push({
+                type: "text",
+                text,
+            });
+        }
+
+        for (const [, toolCall] of [...toolCalls.entries()].sort(
+            ([left], [right]) => left - right,
+        )) {
+            content.push(toToolCallContent({
+                id: toolCall.id,
+                type: toolCall.type,
+                functionName: toolCall.functionName,
+                functionArguments: toolCall.functionArguments,
+            }));
+        }
+
+        yield {
+            type: "done",
+            response: {
+                message: {
+                    role: "assistant",
+                    content,
+                    model: request.model,
+                    usage,
+                    stopReason: toStopReason(finishReason),
+                    errorMessage: undefined,
+                },
+            },
+        };
+    }
+
+    private async fetchChatCompletions(body: JsonObject): Promise<Response> {
+        const response = await fetch(`${this.baseUrl}/chat/completions`, {
+            method: "POST",
+            headers: {
+                authorization: `Bearer ${this.apiKey}`,
+                "content-type": "application/json",
+            },
+            body: JSON.stringify(body),
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(
+                `OpenAI-compatible request failed with ${response.status}: ${errorText}`,
+            );
+        }
+
+        return response;
     }
 }
 
@@ -151,6 +313,169 @@ function toOpenAIMessages(request: ChatRequest): JsonObject[] {
     }
 
     return messages;
+}
+
+function createRequestBody(request: ChatRequest, stream: boolean): JsonObject {
+    const body: JsonObject = {
+        model: request.model,
+        messages: toOpenAIMessages(request),
+    };
+
+    if (request.tools.length > 0) {
+        body.tools = request.tools.map(toOpenAITool);
+    }
+
+    if (stream) {
+        body.stream = true;
+        body.stream_options = {
+            include_usage: true,
+        };
+    }
+
+    return body;
+}
+
+function takeSseEvents(buffer: string): SseEventText[] {
+    const events: SseEventText[] = [];
+    let remainingBuffer = buffer;
+
+    while (true) {
+        const boundary = findSseBoundary(remainingBuffer);
+
+        if (boundary === undefined) {
+            return events;
+        }
+
+        const event = remainingBuffer.slice(0, boundary.index);
+        remainingBuffer = remainingBuffer.slice(boundary.index + boundary.length);
+        events.push({
+            event,
+            remainingBuffer,
+        });
+    }
+}
+
+function findSseBoundary(
+    buffer: string,
+): { index: number; length: number } | undefined {
+    const windowsBoundary = buffer.indexOf("\r\n\r\n");
+    const unixBoundary = buffer.indexOf("\n\n");
+
+    if (windowsBoundary === -1 && unixBoundary === -1) {
+        return undefined;
+    }
+
+    if (windowsBoundary !== -1 && (unixBoundary === -1 || windowsBoundary < unixBoundary)) {
+        return {
+            index: windowsBoundary,
+            length: 4,
+        };
+    }
+
+    return {
+        index: unixBoundary,
+        length: 2,
+    };
+}
+
+function readSseData(event: string): string | undefined {
+    const dataLines = event
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice("data:".length).trimStart());
+
+    if (dataLines.length === 0) {
+        return undefined;
+    }
+
+    return dataLines.join("\n");
+}
+
+function parseStreamChunk(
+    json: Record<string, unknown>,
+): OpenAIChatCompletionStreamChunk {
+    const choices = json.choices;
+
+    if (!Array.isArray(choices)) {
+        throw new Error("OpenAI-compatible stream chunk is missing choices");
+    }
+
+    return {
+        choices: choices.map(parseStreamChoice),
+        usage: parseUsage(json.usage),
+    };
+}
+
+function parseStreamChoice(value: unknown): OpenAIStreamChoice {
+    if (!isRecord(value)) {
+        throw new Error("OpenAI-compatible stream choice must be an object");
+    }
+
+    const delta = value.delta;
+
+    if (!isRecord(delta)) {
+        throw new Error("OpenAI-compatible stream choice is missing delta");
+    }
+
+    const toolCalls = delta.tool_calls;
+
+    if (toolCalls !== undefined && !Array.isArray(toolCalls)) {
+        throw new Error("OpenAI-compatible stream tool_calls must be an array");
+    }
+
+    return {
+        finishReason: readOptionalStringOrNull(value.finish_reason),
+        delta: {
+            content: readOptionalStringOrNull(delta.content),
+            toolCalls: toolCalls?.map(parseToolCallDelta),
+        },
+    };
+}
+
+function parseToolCallDelta(value: unknown): OpenAIToolCallDelta {
+    if (!isRecord(value)) {
+        throw new Error("OpenAI-compatible stream tool call must be an object");
+    }
+
+    if (typeof value.index !== "number") {
+        throw new Error("OpenAI-compatible stream tool call is missing index");
+    }
+
+    const fn = value.function;
+
+    if (fn !== undefined && !isRecord(fn)) {
+        throw new Error("OpenAI-compatible stream tool call function must be an object");
+    }
+
+    return {
+        index: value.index,
+        id: readOptionalStringOrNull(value.id) ?? undefined,
+        type: readOptionalStringOrNull(value.type) ?? undefined,
+        functionName: fn === undefined
+            ? undefined
+            : readOptionalStringOrNull(fn.name) ?? undefined,
+        functionArguments: fn === undefined
+            ? undefined
+            : readOptionalStringOrNull(fn.arguments) ?? undefined,
+    };
+}
+
+function accumulateToolCallDelta(
+    toolCalls: Map<number, ToolCallAccumulator>,
+    delta: OpenAIToolCallDelta,
+): void {
+    const existing = toolCalls.get(delta.index) ?? {
+        id: undefined,
+        type: undefined,
+        functionName: "",
+        functionArguments: "",
+    };
+
+    existing.id = delta.id ?? existing.id;
+    existing.type = delta.type ?? existing.type;
+    existing.functionName += delta.functionName ?? "";
+    existing.functionArguments += delta.functionArguments ?? "";
+    toolCalls.set(delta.index, existing);
 }
 
 function toOpenAIAssistantMessage(message: AssistantMessage): JsonObject {
@@ -257,7 +582,7 @@ function parseToolCall(value: unknown): OpenAIToolCall {
 }
 
 function parseUsage(value: unknown): OpenAIUsage | undefined {
-    if (value === undefined) {
+    if (value === undefined || value === null) {
         return undefined;
     }
 
@@ -269,7 +594,45 @@ function parseUsage(value: unknown): OpenAIUsage | undefined {
         inputTokens: readOptionalNumber(value.prompt_tokens),
         outputTokens: readOptionalNumber(value.completion_tokens),
         totalTokens: readOptionalNumber(value.total_tokens),
+        inputCacheHitTokens: readInputCacheHitTokens(value),
+        inputCacheMissTokens: readInputCacheMissTokens(value),
     };
+}
+
+function readInputCacheHitTokens(value: Record<string, unknown>): number | undefined {
+    return (
+        readOptionalNumber(value.prompt_cache_hit_tokens) ??
+        readPromptTokensDetailsCachedTokens(value.prompt_tokens_details)
+    );
+}
+
+function readInputCacheMissTokens(value: Record<string, unknown>): number | undefined {
+    const directMiss = readOptionalNumber(value.prompt_cache_miss_tokens);
+
+    if (directMiss !== undefined) {
+        return directMiss;
+    }
+
+    const inputTokens = readOptionalNumber(value.prompt_tokens);
+    const inputCacheHitTokens = readInputCacheHitTokens(value);
+
+    if (inputTokens === undefined || inputCacheHitTokens === undefined) {
+        return undefined;
+    }
+
+    return Math.max(0, inputTokens - inputCacheHitTokens);
+}
+
+function readPromptTokensDetailsCachedTokens(value: unknown): number | undefined {
+    if (value === undefined || value === null) {
+        return undefined;
+    }
+
+    if (!isRecord(value)) {
+        throw new Error("OpenAI-compatible prompt_tokens_details must be an object");
+    }
+
+    return readOptionalNumber(value.cached_tokens);
 }
 
 function toAssistantContent(message: OpenAIMessage): AssistantContent[] {
@@ -331,6 +694,8 @@ function toUsage(usage: OpenAIUsage | undefined): Usage | undefined {
         inputTokens: usage.inputTokens ?? 0,
         outputTokens: usage.outputTokens ?? 0,
         totalTokens: usage.totalTokens ?? 0,
+        inputCacheHitTokens: usage.inputCacheHitTokens,
+        inputCacheMissTokens: usage.inputCacheMissTokens,
     };
 }
 

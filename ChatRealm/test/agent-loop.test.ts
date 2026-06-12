@@ -5,6 +5,7 @@ import type {
   AssistantMessage,
   ChatRequest,
   ChatResponse,
+  ChatStreamEvent,
   ChatTransport,
   JsonObject,
 } from "../src/ai/types";
@@ -71,6 +72,22 @@ function createTransport(messages: AssistantMessage[]): ChatTransport {
   };
 }
 
+function createStreamingTransport(
+  events: ChatStreamEvent[],
+  completeMessage = "unused",
+): ChatTransport {
+  return {
+    complete: async (): Promise<ChatResponse> => ({
+      message: textMessage(completeMessage),
+    }),
+    stream: async function* (): AsyncIterable<ChatStreamEvent> {
+      for (const event of events) {
+        yield event;
+      }
+    },
+  };
+}
+
 const echoTool: AgentTool = {
   definition: {
     name: "echo",
@@ -96,6 +113,38 @@ test("runAgentLoop returns a final answer from a fake provider", async () => {
 
   assert.equal(result.finalMessage.content[0]?.type, "text");
   assert.equal(state.run.turnCount, 1);
+  assert.equal(state.messages.at(-1), result.finalMessage);
+});
+
+test("runAgentLoop streams text deltas when a streaming transport is available", async () => {
+  const state = createState();
+  const deltas: string[] = [];
+  const result = await runAgentLoop({
+    state,
+    transport: createStreamingTransport([
+      {
+        type: "textDelta",
+        delta: "he",
+      },
+      {
+        type: "textDelta",
+        delta: "llo",
+      },
+      {
+        type: "done",
+        response: {
+          message: textMessage("hello"),
+        },
+      },
+    ]),
+    tools: createToolRegistry(),
+    onTextDelta: (delta) => {
+      deltas.push(delta);
+    },
+  });
+
+  assert.deepEqual(deltas, ["he", "llo"]);
+  assert.equal(result.finalMessage.content[0]?.type, "text");
   assert.equal(state.messages.at(-1), result.finalMessage);
 });
 

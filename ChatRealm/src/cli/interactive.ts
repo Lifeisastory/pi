@@ -44,17 +44,24 @@ export async function startInteractiveSession(
       }
 
       try {
+        let wroteStreamedText = false;
         const result = await runAgentPrompt({
           ...options,
           transport: options.createTransport(),
           messages,
           prompt: input,
+          onTextDelta: (delta) => {
+            wroteStreamedText = true;
+            process.stdout.write(delta);
+          },
         });
         const text = renderAssistantText(result.finalMessage);
 
         messages = result.messages;
 
-        if (text !== "") {
+        if (wroteStreamedText) {
+          process.stdout.write("\n");
+        } else if (text !== "") {
           console.log(text);
         }
       } catch (error) {

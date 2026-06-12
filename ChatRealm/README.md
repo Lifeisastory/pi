@@ -97,6 +97,8 @@ Enter interactive mode:
 chatrealm
 ```
 
+Assistant text streams to the terminal in interactive mode. Tool calls are still collected as complete model messages before execution.
+
 Interactive mode supports these slash commands:
 
 ```text
@@ -156,7 +158,8 @@ The repository root `.gitignore` ignores `ChatRealm/.chatrealm/`, but a differen
 
 ## Current Limitations
 
-- Print and basic interactive modes only; there is no TUI, RPC mode, or streaming renderer.
+- Print mode and basic interactive mode only; there is no TUI or RPC mode.
+- Interactive mode streams assistant text, but print mode still waits for the final response.
 - One OpenAI-compatible provider path; there is no provider registry.
 - Tool execution has no approval workflow.
 - The shell tool runs local commands in the configured working directory.

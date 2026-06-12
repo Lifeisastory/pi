@@ -1,6 +1,8 @@
 ﻿import type {
     AssistantMessage,
     ChatRequest,
+    ChatResponse,
+    ChatStreamEvent,
     ChatTransport,
     ToolCallContent,
 } from "../ai/types";
@@ -19,6 +21,7 @@ export interface RunAgentLoopOptions {
     state: AgentState;
     transport: ChatTransport;
     tools: ToolRegistry;
+    onTextDelta?: (delta: string) => void;
 }
 
 export interface RunAgentLoopResult {
@@ -49,12 +52,16 @@ function isToolCallContent(content: AssistantMessage["content"][number]): conten
 export async function runAgentLoop(
     options: RunAgentLoopOptions,
 ): Promise<RunAgentLoopResult> {
-    const { state, transport, tools } = options;
+    const { onTextDelta, state, transport, tools } = options;
 
     while (hasRemainingTurns(state)) {
         incrementTurn(state);
 
-        const response = await transport.complete(createChatRequest(state, tools));
+        const response = await completeChatRequest(
+            transport,
+            createChatRequest(state, tools),
+            onTextDelta,
+        );
         const message = response.message;
 
         appendAssistantMessage(state, message);
@@ -74,6 +81,39 @@ export async function runAgentLoop(
     }
 
     throw new Error(`Agent loop reached max turns (${state.run.maxTurns}) before a final answer`);
+}
+
+async function completeChatRequest(
+    transport: ChatTransport,
+    request: ChatRequest,
+    onTextDelta: ((delta: string) => void) | undefined,
+): Promise<ChatResponse> {
+    if (onTextDelta === undefined || transport.stream === undefined) {
+        return await transport.complete(request);
+    }
+
+    let response: ChatResponse | undefined;
+
+    for await (const event of transport.stream(request)) {
+        switch (event.type) {
+            case "textDelta":
+                onTextDelta(event.delta);
+                break;
+            case "done":
+                response = event.response;
+                break;
+            case "error":
+                throw new Error(event.message);
+            case "toolCall":
+                break;
+        }
+    }
+
+    if (response === undefined) {
+        throw new Error("Streaming response ended before completion");
+    }
+
+    return response;
 }
 
 async function executeToolCall(
@@ -112,4 +152,3 @@ function formatToolExecutionError(error: unknown): string {
 
     return `Tool error: ${String(error)}`;
 }
-

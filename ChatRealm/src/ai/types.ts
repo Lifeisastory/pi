@@ -25,6 +25,8 @@ export interface Usage {
     inputTokens: number;
     outputTokens: number;
     totalTokens: number;
+    inputCacheHitTokens: number | undefined;
+    inputCacheMissTokens: number | undefined;
 }
 
 export type StopReason = "stop" | "length" | "toolUse" | "error";
@@ -72,6 +74,7 @@ export interface ChatResponse {
 
 export interface ChatTransport {
     complete(request: ChatRequest): Promise<ChatResponse>;
+    stream?(request: ChatRequest): AsyncIterable<ChatStreamEvent>;
 }
 
 export type ChatStreamEvent =

@@ -32,7 +32,8 @@ export const readFileTool: AgentTool = {
             required: ["path"],
             additionalProperties: false,
         },
-    }, async execute(args, context) {
+    },
+    async execute(args, context) {
         try {
             const inputPath = readRequiredString(args, "path", "read_file arguments");
             const filePath = resolveInsideCwd(context.cwd, inputPath);

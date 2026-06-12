@@ -305,6 +305,14 @@ function parseUsage(value: unknown, sourceName: string): Usage | undefined {
         inputTokens: parseNumber(value.inputTokens, `${sourceName}.inputTokens`),
         outputTokens: parseNumber(value.outputTokens, `${sourceName}.outputTokens`),
         totalTokens: parseNumber(value.totalTokens, `${sourceName}.totalTokens`),
+        inputCacheHitTokens: parseOptionalNumber(
+            value.inputCacheHitTokens,
+            `${sourceName}.inputCacheHitTokens`,
+        ),
+        inputCacheMissTokens: parseOptionalNumber(
+            value.inputCacheMissTokens,
+            `${sourceName}.inputCacheMissTokens`,
+        ),
     };
 }
 
@@ -314,6 +322,17 @@ function parseNumber(value: unknown, sourceName: string): number {
     }
 
     return value;
+}
+
+function parseOptionalNumber(
+    value: unknown,
+    sourceName: string,
+): number | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+
+    return parseNumber(value, sourceName);
 }
 function parseStopReason(value: unknown, sourceName: string): StopReason {
     if (

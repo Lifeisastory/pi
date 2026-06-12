@@ -13,6 +13,7 @@ export interface RunAgentPromptOptions {
   transport: ChatTransport;
   tools: ToolRegistry;
   messages: Message[];
+  onTextDelta?: (delta: string) => void;
 }
 
 export interface RunAgentPromptResult {
@@ -39,6 +40,7 @@ export async function runAgentPrompt(
       state,
       transport: options.transport,
       tools: options.tools,
+      onTextDelta: options.onTextDelta,
     });
   } catch (error) {
     if (
