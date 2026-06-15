@@ -1,0 +1,49 @@
+# Project TODO Index
+
+## Artifact Metadata
+- Artifact: project-todo-index
+- Language: English
+- Source: generated-from-requirements
+- Output Directory: _TODO
+- Canonical: true
+- Generated: 2026-06-15
+
+## Project Summary
+- Goal: Add multi-API model protocol support to ChatRealm so the CLI can select `openai-completions`, `openai-responses`, or `anthropic-messages` through `chatrealm.config.json` key `api`.
+- Scope: Plan only. Implementation should introduce a small unified adapter layer for ChatRealm, keep the existing internal `ChatTransport` contract, add OpenAI Responses and Anthropic Messages protocol adapters, and update focused tests and docs.
+- Reference: The root pi project uses `packages/ai/src/api-registry.ts` plus provider modules keyed by API names such as `openai-completions`, `openai-responses`, and `anthropic-messages`. ChatRealm should reuse the idea, not copy the full pi implementation.
+
+## Planned Structure
+- `chatrealm.config.json` | Add required project config key `api` with value `openai-completions`, `openai-responses`, or `anthropic-messages`.
+- `src/config/config.ts` | Parse and validate the `api` config value, expose it as a typed protocol selector, and optionally support a matching environment override if consistent with existing config precedence.
+- `src/ai/types.ts` | Keep the internal provider-neutral `ChatTransport`, `ChatRequest`, `ChatResponse`, message, tool, and usage contract; add a typed API protocol union only if needed.
+- `src/ai/transport-factory.ts` | New unified adapter layer that maps selected API names to concrete `ChatTransport` implementations.
+- `src/ai/openai-completions.ts` | Rename or wrap the current OpenAI-compatible Chat Completions adapter as the `openai-completions` implementation.
+- `src/ai/openai-responses.ts` | New adapter for OpenAI Responses API request, response, streaming, tool call, and usage conversion.
+- `src/ai/anthropic-messages.ts` | New adapter for Anthropic Messages API request, response, streaming, tool use, tool result, and usage conversion.
+- `src/main.ts` | Replace hardcoded provider selection with config-driven adapter selection through the unified transport factory.
+- `test/` | Add focused tests for config parsing, adapter selection, OpenAI Responses conversion, Anthropic Messages conversion, and existing OpenAI Completions behavior.
+- `README.md` and `README.zh.md` | Document `api`, supported values, protocol-specific base URLs, environment/config precedence, and limitations.
+
+## TODO Items
+- TODO-001 | completed | Add API protocol config parsing | Scope: Added typed validation for `api` in [chatrealm.config.json](../chatrealm.config.json), updated the default sample config to include `"api": "openai-completions"`, and covered config/env, invalid, and missing values with [test/config.test.ts](../test/config.test.ts). [test/interactive-streaming.test.ts](../test/interactive-streaming.test.ts) now sets `CHATREALM_API` because `api` is required. | Touches: [chatrealm.config.json](../chatrealm.config.json), [src/config/config.ts](../src/config/config.ts), [test/config.test.ts](../test/config.test.ts), [test/interactive-streaming.test.ts](../test/interactive-streaming.test.ts) | Depends on: none
+- TODO-002 | completed | Introduce unified AI transport factory | Scope: Added [src/ai/transport-factory.ts](../src/ai/transport-factory.ts), moved `ChatApi` into [src/ai/types.ts](../src/ai/types.ts), and updated [src/main.ts](../src/main.ts) to create transports through config-driven `api` selection. The factory currently registers `openai-completions` through the existing adapter and reports the later protocols as not implemented yet. Covered selection and not-yet-implemented cases in [test/transport-factory.test.ts](../test/transport-factory.test.ts). | Touches: [src/ai/types.ts](../src/ai/types.ts), [src/ai/transport-factory.ts](../src/ai/transport-factory.ts), [src/main.ts](../src/main.ts), [test/transport-factory.test.ts](../test/transport-factory.test.ts) | Depends on: TODO-001
+- TODO-003 | completed | Normalize existing Chat Completions adapter as `openai-completions` | Scope: Renamed the existing adapter to [src/ai/openai-completions.ts](../src/ai/openai-completions.ts), renamed its public factory to `createOpenAICompletionsTransport`, updated [src/ai/transport-factory.ts](../src/ai/transport-factory.ts) to use the new module, and renamed the focused tests to [test/openai-completions.test.ts](../test/openai-completions.test.ts). Existing Chat Completions request, response, streaming, tool call, and usage behavior is preserved. | Touches: [src/ai/openai-completions.ts](../src/ai/openai-completions.ts), [src/ai/transport-factory.ts](../src/ai/transport-factory.ts), [test/openai-completions.test.ts](../test/openai-completions.test.ts) | Depends on: TODO-002
+- TODO-004 | completed | Implement OpenAI Responses adapter | Scope: Added [src/ai/openai-responses.ts](../src/ai/openai-responses.ts), registered `openai-responses` in [src/ai/transport-factory.ts](../src/ai/transport-factory.ts), and covered request conversion, non-stream response conversion, SSE text/tool-call streaming, stop reasons, and usage conversion in [test/openai-responses.test.ts](../test/openai-responses.test.ts). The adapter keeps the existing `ChatTransport` contract. | Touches: [src/ai/openai-responses.ts](../src/ai/openai-responses.ts), [src/ai/transport-factory.ts](../src/ai/transport-factory.ts), [test/openai-responses.test.ts](../test/openai-responses.test.ts), [test/transport-factory.test.ts](../test/transport-factory.test.ts) | Depends on: TODO-002
+- TODO-005 | completed | Implement Anthropic Messages adapter | Scope: Added [src/ai/anthropic-messages.ts](../src/ai/anthropic-messages.ts), registered `anthropic-messages` in [src/ai/transport-factory.ts](../src/ai/transport-factory.ts), and covered system prompt, user/assistant messages, tool calls, tool results, non-stream text/tool_use conversion, SSE text/tool_use streaming, stop reasons, and usage conversion in [test/anthropic-messages.test.ts](../test/anthropic-messages.test.ts). The adapter keeps the existing `ChatTransport` contract. | Touches: [src/ai/anthropic-messages.ts](../src/ai/anthropic-messages.ts), [src/ai/transport-factory.ts](../src/ai/transport-factory.ts), [test/anthropic-messages.test.ts](../test/anthropic-messages.test.ts), [test/transport-factory.test.ts](../test/transport-factory.test.ts) | Depends on: TODO-002
+- TODO-006 | completed | Add adapter-selection integration coverage | Scope: Added [test/api-selection.test.ts](../test/api-selection.test.ts) to run `bin/chatrealm.mjs -p` against mocked HTTP servers and verify config-driven endpoint selection for `openai-completions`, `openai-responses`, and `anthropic-messages`. Extended [test/interactive-streaming.test.ts](../test/interactive-streaming.test.ts) with an `openai-responses` interactive streaming case selected from config. | Touches: [test/api-selection.test.ts](../test/api-selection.test.ts), [test/interactive-streaming.test.ts](../test/interactive-streaming.test.ts) | Depends on: TODO-003, TODO-004, TODO-005
+- TODO-007 | skipped | Update user documentation and limitations | Scope: User explicitly requested not to execute this README update. English and Chinese README files are intentionally unchanged; architecture documentation was refreshed instead in [_ARCHITECTURE/ARCHITECTURE.en.md](../_ARCHITECTURE/ARCHITECTURE.en.md) and [_ARCHITECTURE/ARCHITECTURE.md](../_ARCHITECTURE/ARCHITECTURE.md). | Touches: none for README; architecture docs updated outside this skipped TODO | Depends on: TODO-006
+- TODO-008 | completed | Run final validation for the protocol expansion | Scope: Passed ChatRealm validation with `npm run check` and `npm run test:unit` from [ChatRealm](..). Unit coverage reported 31 tests passing, 0 failing. Root `npm run check` was not run because this session changed documentation/TODO artifacts only, not source code. | Touches: validation only | Depends on: TODO-006 and refreshed architecture docs
+
+## Next Executable Item
+- None | Protocol expansion validation is complete for the current requested scope.
+
+## Assumptions And Risks
+- Config source | `api` is now required through `chatrealm.config.json` or `CHATREALM_API`; valid values are `openai-completions`, `openai-responses`, and `anthropic-messages`. Implementation should not silently keep `openai-compatible` as a valid API value unless the user asks for compatibility.
+- CLI flag scope | Existing `--provider` currently selects the only provider name. This plan keeps protocol selection in config first; changing or removing the CLI flag is a separate behavior decision and should be handled deliberately during implementation.
+- Internal contract | ChatRealm should keep its current provider-neutral `ChatTransport` contract so the agent loop and session store do not need protocol-specific branching.
+- Streaming | ChatRealm currently collects tool calls as complete assistant messages before tool execution. New protocol stream adapters should preserve that behavior unless a later requirement asks for interleaved tool execution.
+- Security | `chatrealm.config.json` currently contains a non-empty API key. Protocol work should avoid copying or logging the key value and should consider replacing committed/local sample secrets with placeholders in a separate implementation step if approved.
+- Testing | Adapter behavior should be verified with mocked `fetch` or local HTTP servers. No real provider keys or paid requests are needed.
+- Reference implementation | pi's `packages/ai` implementation is broader than ChatRealm needs. Use it for adapter boundaries and conversion ideas, but keep ChatRealm's implementation lean.
+- Documentation scope | TODO-007 README work is intentionally skipped by user request. Architecture docs are the updated structural record for this pass.

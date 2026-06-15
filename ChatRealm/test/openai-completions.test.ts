@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createOpenAICompatibleTransport } from "../src/ai/openai-compatible";
+import { createOpenAICompletionsTransport } from "../src/ai/openai-completions";
 import type { ChatRequest, ChatStreamEvent } from "../src/ai/types";
 
 const request: ChatRequest = {
@@ -16,7 +16,7 @@ const request: ChatRequest = {
   tools: [],
 };
 
-test("OpenAI-compatible transport streams text deltas and final response", async () => {
+test("OpenAI Completions transport streams text deltas and final response", async () => {
   const originalFetch = globalThis.fetch;
   const sse = [
     'data: {"choices":[{"delta":{"content":"he"},"finish_reason":null}],"usage":null}',
@@ -36,7 +36,7 @@ test("OpenAI-compatible transport streams text deltas and final response", async
     });
 
   try {
-    const transport = createOpenAICompatibleTransport({
+    const transport = createOpenAICompletionsTransport({
       apiKey: "test-key",
     });
     const events: ChatStreamEvent[] = [];
@@ -89,7 +89,7 @@ test("OpenAI-compatible transport streams text deltas and final response", async
   }
 });
 
-test("OpenAI-compatible transport derives cache miss tokens from prompt details", async () => {
+test("OpenAI Completions transport derives cache miss tokens from prompt details", async () => {
   const originalFetch = globalThis.fetch;
 
   globalThis.fetch = async (): Promise<Response> =>
@@ -113,7 +113,7 @@ test("OpenAI-compatible transport derives cache miss tokens from prompt details"
     });
 
   try {
-    const transport = createOpenAICompatibleTransport({
+    const transport = createOpenAICompletionsTransport({
       apiKey: "test-key",
     });
     const response = await transport.complete(request);

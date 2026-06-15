@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -42,6 +42,7 @@ test("chatrealm interactive mode writes streaming chunks before the response com
       cwd: process.cwd(),
       env: {
         ...process.env,
+        CHATREALM_API: "openai-completions",
         CHATREALM_API_KEY: "test-key",
         CHATREALM_BASE_URL: `http://127.0.0.1:${address.port}`,
         CHATREALM_CONFIG: join(sessionCwd, "missing.config.json"),
@@ -89,6 +90,114 @@ test("chatrealm interactive mode writes streaming chunks before the response com
     });
 
     assert.equal(exitCode, 0, stderr);
+    assert.match(stdout, /first/);
+    assert.match(stdout, /second/);
+    assert.notEqual(firstSeenAt.value, undefined);
+    assert.notEqual(secondSeenAt.value, undefined);
+
+    if (firstSeenAt.value === undefined || secondSeenAt.value === undefined) {
+      throw new Error("Expected streaming markers");
+    }
+
+    assert.ok(
+      secondSeenAt.value - firstSeenAt.value >= 150,
+      `Expected delayed streaming chunks, got stdout: ${stdout}`,
+    );
+  } finally {
+    server.close();
+    await rm(sessionCwd, { recursive: true, force: true });
+  }
+});
+
+test("chatrealm interactive mode selects OpenAI Responses from config and streams chunks", { timeout: 5_000 }, async () => {
+  let requestCount = 0;
+  let requestUrl: string | undefined;
+  const server = createServer((request, response) => {
+    requestCount += 1;
+    requestUrl = request.url;
+    void handleOpenAIResponsesStreamingRequest(request, response);
+  });
+
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  const address = server.address();
+
+  if (address === null || typeof address === "string") {
+    throw new Error("Expected TCP server address");
+  }
+
+  const sessionCwd = await mkdtemp(join(tmpdir(), "chatrealm-stream-"));
+  const configPath = join(sessionCwd, "chatrealm.config.json");
+  const firstSeenAt: { value: number | undefined } = { value: undefined };
+  const secondSeenAt: { value: number | undefined } = { value: undefined };
+  let wroteExit = false;
+  const start = Date.now();
+  let stdout = "";
+  let stderr = "";
+
+  try {
+    await writeFile(
+      configPath,
+      `${JSON.stringify({
+        api: "openai-responses",
+        apiKey: "test-key",
+        baseUrl: `http://127.0.0.1:${address.port}`,
+        cwd: sessionCwd,
+        model: "demo-model",
+      })}\n`,
+      "utf8",
+    );
+
+    const child = spawn(process.execPath, ["bin/chatrealm.mjs"], {
+      cwd: process.cwd(),
+      env: {
+        ...createCleanEnv(),
+        CHATREALM_CONFIG: configPath,
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+
+      if (stdout.includes("first") && firstSeenAt.value === undefined) {
+        firstSeenAt.value = Date.now() - start;
+      }
+
+      if (stdout.includes("second") && secondSeenAt.value === undefined) {
+        secondSeenAt.value = Date.now() - start;
+      }
+
+      if (
+        !wroteExit &&
+        stdout.includes("second") &&
+        countOccurrences(stdout, "chatrealm> ") >= 2
+      ) {
+        wroteExit = true;
+        child.stdin.write("/exit\n");
+      }
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.stdin.write("hello\n");
+
+    const [exitCode] = await waitForExit(child, 3_000, () => {
+      child.kill();
+      return [
+        "Timed out waiting for chatrealm to exit.",
+        `Requests: ${requestCount}`,
+        `Request URL: ${requestUrl}`,
+        `stdout: ${stdout}`,
+        `stderr: ${stderr}`,
+      ].join("\n");
+    });
+
+    assert.equal(exitCode, 0, stderr);
+    assert.equal(requestUrl, "/responses");
     assert.match(stdout, /first/);
     assert.match(stdout, /second/);
     assert.notEqual(firstSeenAt.value, undefined);
@@ -159,10 +268,76 @@ async function handleStreamingRequest(
   response.end("data: [DONE]\n\n");
 }
 
+async function handleOpenAIResponsesStreamingRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+): Promise<void> {
+  if (request.url !== "/responses") {
+    response.writeHead(404);
+    response.end();
+    return;
+  }
+
+  await readRequestBody(request);
+  response.writeHead(200, {
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+    "content-type": "text/event-stream",
+  });
+  response.write(
+    `data: ${JSON.stringify({
+      type: "response.output_item.added",
+      item: {
+        type: "message",
+      },
+    })}\n\n`,
+  );
+  response.write(
+    `data: ${JSON.stringify({
+      type: "response.output_text.delta",
+      delta: "first",
+    })}\n\n`,
+  );
+  await delay(250);
+  response.write(
+    `data: ${JSON.stringify({
+      type: "response.output_text.delta",
+      delta: " second",
+    })}\n\n`,
+  );
+  response.write(
+    `data: ${JSON.stringify({
+      type: "response.completed",
+      response: {
+        status: "completed",
+        usage: {
+          input_tokens: 1,
+          output_tokens: 2,
+          total_tokens: 3,
+        },
+      },
+    })}\n\n`,
+  );
+  await delay(50);
+  response.end("data: [DONE]\n\n");
+}
+
 async function readRequestBody(request: IncomingMessage): Promise<void> {
   for await (const chunk of request) {
     void chunk;
   }
+}
+
+function createCleanEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && !key.startsWith("CHATREALM_")) {
+      env[key] = value;
+    }
+  }
+
+  return env;
 }
 
 function waitForExit(

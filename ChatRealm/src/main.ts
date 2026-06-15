@@ -1,6 +1,6 @@
 ﻿import { renderAssistantText, runAgentPrompt } from "./agent/run-prompt";
-import { createOpenAICompatibleTransport } from "./ai/openai-compatible";
-import type { ChatTransport, Message } from "./ai/types";
+import { createChatTransport } from "./ai/transport-factory";
+import type { ChatApi, ChatTransport, Message } from "./ai/types";
 import { getHelpText, parseArgs, type ParsedArgs } from "./cli/args";
 import { startInteractiveSession } from "./cli/interactive";
 import { loadConfig } from "./config/config";
@@ -13,6 +13,7 @@ const DEFAULT_MODEL = "gpt-4.1-mini";
 
 interface Runtime {
   cwd: string;
+  api: ChatApi;
   model: string;
   apiKey: string | undefined;
   baseUrl: string | undefined;
@@ -72,6 +73,7 @@ function createRuntime(parsed: ParsedArgs): Runtime {
 
   return {
     cwd,
+    api: config.api,
     model,
     apiKey: config.apiKey,
     baseUrl: config.baseUrl,
@@ -89,7 +91,8 @@ function createTransport(runtime: Runtime): ChatTransport {
     );
   }
 
-  return createOpenAICompatibleTransport({
+  return createChatTransport({
+    api: runtime.api,
     apiKey,
     baseUrl: runtime.baseUrl,
   });

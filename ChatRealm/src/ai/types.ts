@@ -1,3 +1,11 @@
+export const SUPPORTED_CHAT_APIS = [
+    "openai-completions",
+    "openai-responses",
+    "anthropic-messages",
+] as const;
+
+export type ChatApi = (typeof SUPPORTED_CHAT_APIS)[number];
+
 export type JsonPrimitive = string | number | boolean | null;
 
 export type JsonValue =

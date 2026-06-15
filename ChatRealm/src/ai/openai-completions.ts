@@ -16,7 +16,7 @@ import type {
 
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";
 
-export interface OpenAICompatibleOptions {
+export interface OpenAICompletionsOptions {
     apiKey: string;
     baseUrl?: string;
 }
@@ -86,13 +86,13 @@ interface SseEventText {
     remainingBuffer: string;
 }
 
-class OpenAICompatibleTransport implements ChatTransport {
+class OpenAICompletionsTransport implements ChatTransport {
     private readonly apiKey: string;
     private readonly baseUrl: string;
 
-    constructor(options: OpenAICompatibleOptions) {
+    constructor(options: OpenAICompletionsOptions) {
         if (options.apiKey.trim() === "") {
-            throw new Error("Missing OpenAI-compatible API key");
+            throw new Error("Missing OpenAI Completions API key");
         }
 
         const baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
@@ -105,12 +105,12 @@ class OpenAICompatibleTransport implements ChatTransport {
         const response = await this.fetchChatCompletions(createRequestBody(request, false));
 
         const responseText = await response.text();
-        const json = parseJsonObject(responseText, "OpenAI-compatible response");
+        const json = parseJsonObject(responseText, "OpenAI Completions response");
         const data = parseChatCompletionResponse(json);
         const choice = data.choices[0];
 
         if (choice === undefined) {
-            throw new Error("OpenAI-compatible response did not include a choice");
+            throw new Error("OpenAI Completions response did not include a choice");
         }
 
         const message: AssistantMessage = {
@@ -129,7 +129,7 @@ class OpenAICompatibleTransport implements ChatTransport {
         const response = await this.fetchChatCompletions(createRequestBody(request, true));
 
         if (response.body === null) {
-            throw new Error("OpenAI-compatible streaming response did not include a body");
+            throw new Error("OpenAI Completions streaming response did not include a body");
         }
 
         const reader = response.body.getReader();
@@ -159,7 +159,7 @@ class OpenAICompatibleTransport implements ChatTransport {
                 }
 
                 const chunk = parseStreamChunk(
-                    parseJsonObject(data, "OpenAI-compatible stream chunk"),
+                    parseJsonObject(data, "OpenAI Completions stream chunk"),
                 );
 
                 usage = toUsage(chunk.usage) ?? usage;
@@ -194,7 +194,7 @@ class OpenAICompatibleTransport implements ChatTransport {
             }
 
             const chunk = parseStreamChunk(
-                parseJsonObject(data, "OpenAI-compatible stream chunk"),
+                parseJsonObject(data, "OpenAI Completions stream chunk"),
             );
 
             usage = toUsage(chunk.usage) ?? usage;
@@ -265,7 +265,7 @@ class OpenAICompatibleTransport implements ChatTransport {
         if (!response.ok) {
             const errorText = await response.text();
             throw new Error(
-                `OpenAI-compatible request failed with ${response.status}: ${errorText}`,
+                `OpenAI Completions request failed with ${response.status}: ${errorText}`,
             );
         }
 
@@ -273,10 +273,10 @@ class OpenAICompatibleTransport implements ChatTransport {
     }
 }
 
-export function createOpenAICompatibleTransport(
-    options: OpenAICompatibleOptions,
+export function createOpenAICompletionsTransport(
+    options: OpenAICompletionsOptions,
 ): ChatTransport {
-    return new OpenAICompatibleTransport(options);
+    return new OpenAICompletionsTransport(options);
 }
 
 function toOpenAIMessages(request: ChatRequest): JsonObject[] {
@@ -397,7 +397,7 @@ function parseStreamChunk(
     const choices = json.choices;
 
     if (!Array.isArray(choices)) {
-        throw new Error("OpenAI-compatible stream chunk is missing choices");
+        throw new Error("OpenAI Completions stream chunk is missing choices");
     }
 
     return {
@@ -408,19 +408,19 @@ function parseStreamChunk(
 
 function parseStreamChoice(value: unknown): OpenAIStreamChoice {
     if (!isRecord(value)) {
-        throw new Error("OpenAI-compatible stream choice must be an object");
+        throw new Error("OpenAI Completions stream choice must be an object");
     }
 
     const delta = value.delta;
 
     if (!isRecord(delta)) {
-        throw new Error("OpenAI-compatible stream choice is missing delta");
+        throw new Error("OpenAI Completions stream choice is missing delta");
     }
 
     const toolCalls = delta.tool_calls;
 
     if (toolCalls !== undefined && !Array.isArray(toolCalls)) {
-        throw new Error("OpenAI-compatible stream tool_calls must be an array");
+        throw new Error("OpenAI Completions stream tool_calls must be an array");
     }
 
     return {
@@ -434,17 +434,17 @@ function parseStreamChoice(value: unknown): OpenAIStreamChoice {
 
 function parseToolCallDelta(value: unknown): OpenAIToolCallDelta {
     if (!isRecord(value)) {
-        throw new Error("OpenAI-compatible stream tool call must be an object");
+        throw new Error("OpenAI Completions stream tool call must be an object");
     }
 
     if (typeof value.index !== "number") {
-        throw new Error("OpenAI-compatible stream tool call is missing index");
+        throw new Error("OpenAI Completions stream tool call is missing index");
     }
 
     const fn = value.function;
 
     if (fn !== undefined && !isRecord(fn)) {
-        throw new Error("OpenAI-compatible stream tool call function must be an object");
+        throw new Error("OpenAI Completions stream tool call function must be an object");
     }
 
     return {
@@ -527,7 +527,7 @@ function parseChatCompletionResponse(
     const choices = json.choices;
 
     if (!Array.isArray(choices)) {
-        throw new Error("OpenAI-compatible response is missing choices");
+        throw new Error("OpenAI Completions response is missing choices");
     }
 
     return {
@@ -538,19 +538,19 @@ function parseChatCompletionResponse(
 
 function parseChoice(value: unknown): OpenAIChoice {
     if (!isRecord(value)) {
-        throw new Error("OpenAI-compatible choice must be an object");
+        throw new Error("OpenAI Completions choice must be an object");
     }
 
     const message = value.message;
 
     if (!isRecord(message)) {
-        throw new Error("OpenAI-compatible choice is missing message");
+        throw new Error("OpenAI Completions choice is missing message");
     }
 
     const toolCalls = message.tool_calls;
 
     if (toolCalls !== undefined && !Array.isArray(toolCalls)) {
-        throw new Error("OpenAI-compatible tool_calls must be an array");
+        throw new Error("OpenAI Completions tool_calls must be an array");
     }
 
     return {
@@ -564,13 +564,13 @@ function parseChoice(value: unknown): OpenAIChoice {
 
 function parseToolCall(value: unknown): OpenAIToolCall {
     if (!isRecord(value)) {
-        throw new Error("OpenAI-compatible tool call must be an object");
+        throw new Error("OpenAI Completions tool call must be an object");
     }
 
     const fn = value.function;
 
     if (!isRecord(fn)) {
-        throw new Error("OpenAI-compatible tool call is missing function");
+        throw new Error("OpenAI Completions tool call is missing function");
     }
 
     return {
@@ -587,7 +587,7 @@ function parseUsage(value: unknown): OpenAIUsage | undefined {
     }
 
     if (!isRecord(value)) {
-        throw new Error("OpenAI-compatible usage must be an object");
+        throw new Error("OpenAI Completions usage must be an object");
     }
 
     return {
@@ -629,7 +629,7 @@ function readPromptTokensDetailsCachedTokens(value: unknown): number | undefined
     }
 
     if (!isRecord(value)) {
-        throw new Error("OpenAI-compatible prompt_tokens_details must be an object");
+        throw new Error("OpenAI Completions prompt_tokens_details must be an object");
     }
 
     return readOptionalNumber(value.cached_tokens);
@@ -654,24 +654,24 @@ function toAssistantContent(message: OpenAIMessage): AssistantContent[] {
 
 function toToolCallContent(toolCall: OpenAIToolCall): AssistantContent {
     if (toolCall.type !== undefined && toolCall.type !== "function") {
-        throw new Error(`Unsupported OpenAI-compatible tool call type: ${toolCall.type}`);
+        throw new Error(`Unsupported OpenAI Completions tool call type: ${toolCall.type}`);
     }
 
     if (toolCall.id === undefined || toolCall.id === "") {
-        throw new Error("OpenAI-compatible tool call is missing id");
+        throw new Error("OpenAI Completions tool call is missing id");
     }
 
     if (toolCall.functionName === undefined || toolCall.functionName === "") {
-        throw new Error("OpenAI-compatible tool call is missing function name");
+        throw new Error("OpenAI Completions tool call is missing function name");
     }
 
     if (toolCall.functionArguments === undefined) {
-        throw new Error("OpenAI-compatible tool call is missing function arguments");
+        throw new Error("OpenAI Completions tool call is missing function arguments");
     }
 
     const parsedArguments = parseJsonObject(
         toolCall.functionArguments,
-        `OpenAI-compatible tool call ${toolCall.functionName} arguments`,
+        `OpenAI Completions tool call ${toolCall.functionName} arguments`,
     );
 
     return {
@@ -680,7 +680,7 @@ function toToolCallContent(toolCall: OpenAIToolCall): AssistantContent {
         name: toolCall.functionName,
         arguments: toJsonObject(
             parsedArguments,
-            `OpenAI-compatible tool call ${toolCall.functionName} arguments`,
+            `OpenAI Completions tool call ${toolCall.functionName} arguments`,
         ),
     };
 }
@@ -724,7 +724,7 @@ function readOptionalStringOrNull(value: unknown): string | null | undefined {
         return value;
     }
 
-    throw new Error("Expected optional string value in OpenAI-compatible response");
+    throw new Error("Expected optional string value in OpenAI Completions response");
 }
 
 function readOptionalNumber(value: unknown): number | undefined {
@@ -733,7 +733,7 @@ function readOptionalNumber(value: unknown): number | undefined {
     }
 
     if (typeof value !== "number") {
-        throw new Error("Expected optional number value in OpenAI-compatible response");
+        throw new Error("Expected optional number value in OpenAI Completions response");
     }
 
     return value;

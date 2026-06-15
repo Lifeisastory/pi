@@ -42,11 +42,7 @@ function createChatRequest(
 }
 
 function getToolCalls(message: AssistantMessage): ToolCallContent[] {
-    return message.content.filter(isToolCallContent);
-}
-
-function isToolCallContent(content: AssistantMessage["content"][number]): content is ToolCallContent {
-    return content.type === "toolCall";
+    return message.content.filter((content) => content.type === "toolCall");
 }
 
 export async function runAgentLoop(
