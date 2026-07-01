@@ -175,6 +175,8 @@ generateSummary() / generateBranchSummary() → 替换会话历史
 ## 功能索引
 
 - CLI 启动主流程：从进程入口经过参数解析、会话/runtime 创建到运行模式分发，详见 [cli-main-flow.md](./_FEATURE/cli-main-flow.md)
+- 对话记忆管理：会话树 JSONL 持久化、按 token 阈值触发的 LLM 摘要压缩、分支摘要，详见 [conversation-memory.md](./_FEATURE/conversation-memory.md)
+- 提示词组装：system prompt 的 7 段拼接、动态注入（工具/CLAUDE.md/skills/cwd/日期）与最终发给 LLM 的 Context 构造，详见 [prompt-assembly.md](./_FEATURE/prompt-assembly.md)
 
 ## 风险与未知
 

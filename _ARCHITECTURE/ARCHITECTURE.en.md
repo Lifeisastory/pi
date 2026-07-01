@@ -89,6 +89,8 @@
 
 ## Feature Index
 - CLI startup main flow from process entry through argument parsing, session/runtime creation, and mode dispatch, see [cli-main-flow.en.md](./_FEATURE/cli-main-flow.en.md)
+- Conversation memory management: session-tree JSONL persistence, token-threshold compaction with LLM summarization, and branch summaries, see [conversation-memory.en.md](./_FEATURE/conversation-memory.en.md)
+- Prompt assembly: 7-section system prompt construction, dynamic injection (tools/CLAUDE.md/skills/cwd/date), and final Context build for the LLM, see [prompt-assembly.en.md](./_FEATURE/prompt-assembly.en.md)
 
 ## Risks And Unknowns
 - AI provider implementations | Each provider has unique message format, streaming behavior, error handling; not all tested end-to-end | test files in packages/ai/test/ | medium
